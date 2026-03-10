@@ -8,7 +8,8 @@ function getSupabaseMessage(error, fallback) {
 export class ClientStore {
     constructor() {
         this.clients = [];
-        this.ready = this.hydrate();
+        this.ready = Promise.resolve();
+        this.isLoaded = false;
     }
 
     async hydrate() {
@@ -22,6 +23,19 @@ export class ClientStore {
         }
 
         this.clients = (data || []).map(mapClientRowToModel);
+        this.isLoaded = true;
+    }
+
+    async load(force = false) {
+        if (this.isLoaded && !force) return this.ready;
+        this.ready = this.hydrate();
+        return this.ready;
+    }
+
+    reset() {
+        this.clients = [];
+        this.isLoaded = false;
+        this.ready = Promise.resolve();
     }
 
     normalizeDoc(doc) {

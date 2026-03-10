@@ -1,10 +1,12 @@
-// Main application logic
 import './styles/main.css';
 import './styles/themes.css';
 import { renderHeader } from './components/Header.js';
 import { renderDock, initDock } from './components/Dock.js';
 import { processStore } from './utils/ProcessStore.js';
 import { clientStore } from './utils/ClientStore.js';
+import { authService } from './utils/AuthService.js';
+import { profileService } from './utils/ProfileService.js';
+import { renderLoginScreen } from './components/LoginScreen.js';
 import { renderClientList } from './components/ClientList.js';
 import { renderClientForm } from './components/ClientForm.js';
 import { renderClientDetails } from './components/ClientDetails.js';
@@ -13,10 +15,13 @@ import { renderProcessForm } from './components/ProcessForm.js';
 import { renderProcessDetails } from './components/ProcessDetails.js';
 import { renderDeadlineDashboard } from './components/DeadlineDashboard.js';
 import { renderSettings } from './components/Settings.js';
+import { renderTeamSettings } from './components/TeamSettings.js';
 import { showNoticeModal } from './components/NoticeModal.js';
 
 const THEME_STORAGE_KEY = 'app-control-theme';
 const AVAILABLE_THEMES = ['light', 'dark', 'ocean', 'sunset'];
+const LOGIN_ROUTE = '/';
+const APP_ROUTE = '/app';
 
 function getStoredTheme() {
     const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
@@ -30,163 +35,333 @@ function applyTheme(theme) {
     return safeTheme;
 }
 
+function navigateTo(path, replace = false) {
+    if (window.location.pathname === path) return;
+    const method = replace ? 'replaceState' : 'pushState';
+    window.history[method]({}, '', path);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     const app = document.getElementById('app');
     let currentTheme = applyTheme(getStoredTheme());
+    let currentSession = null;
+    let currentProfile = null;
+    let teamProfiles = [];
+
+    const renderRoute = async () => {
+        const isAuthenticated = !!currentSession;
+        const pathname = window.location.pathname;
+
+        if (!isAuthenticated && pathname !== LOGIN_ROUTE) {
+            navigateTo(LOGIN_ROUTE, true);
+        }
+
+        if (isAuthenticated && pathname === LOGIN_ROUTE) {
+            navigateTo(APP_ROUTE, true);
+        }
+
+        if (!currentSession) {
+            renderLoginScreen(app, async (email, password) => {
+                await authService.signInWithPassword(email, password);
+            });
+            return;
+        }
+
+        try {
+            const [profile] = await Promise.all([
+                profileService.getProfile(currentSession.user.id),
+                clientStore.load(true),
+                processStore.load(true)
+            ]);
+            currentProfile = profile;
+            if (currentProfile?.role === 'admin') {
+                teamProfiles = await profileService.listProfiles();
+            } else {
+                teamProfiles = [];
+            }
+        } catch (error) {
+            app.innerHTML = `
+                <main id="main-content" style="padding: 3rem 2rem;">
+                    <div class="glass-card" style="max-width: 760px; margin: 0 auto; padding: 2rem;">
+                        <p class="label-tech" style="color: var(--rose-500);">ERRO DE INTEGRAÇÃO</p>
+                        <h1 class="font-black" style="font-size: 2rem; margin-top: 0.5rem;">Não foi possível carregar o painel protegido.</h1>
+                        <p style="color: var(--slate-500); margin-top: 1rem; line-height: 1.6;">${error?.message || 'Verifique a autenticação e a estrutura do banco no Supabase.'}</p>
+                    </div>
+                </main>
+            `;
+            return;
+        }
+
+        renderAuthenticatedApp(currentSession);
+    };
+
+    const renderAuthenticatedApp = (session) => {
+        app.innerHTML = `
+            ${renderHeader(session?.user?.email || '')}
+            <main id="main-content">
+                <div id="view-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3rem;">
+                    <div id="view-title-group" style="display: flex; align-items: center; gap: 1rem;">
+                        <div id="view-icon" style="color: var(--slate-950);"></div>
+                        <h1 id="page-title" class="font-black" style="font-size: 2rem; text-transform: uppercase;">Painel Central</h1>
+                    </div>
+                    <div id="view-actions"></div>
+                </div>
+                <section id="content-area"></section>
+            </main>
+            ${renderDock({ isAdmin: currentProfile?.role === 'admin' })}
+        `;
+
+        document.getElementById('btn-logout')?.addEventListener('click', async () => {
+            try {
+                await authService.signOut();
+            } catch (error) {
+                showNoticeModal('Erro ao sair', error?.message || 'Não foi possível encerrar a sessão.');
+            }
+        });
+
+        const contentArea = document.getElementById('content-area');
+        const pageTitle = document.getElementById('page-title');
+        const viewIcon = document.getElementById('view-icon');
+        const viewActions = document.getElementById('view-actions');
+
+        const navigate = (id) => {
+            contentArea.innerHTML = '';
+            viewActions.innerHTML = '';
+
+            const sectionMap = {
+                painel: { title: 'Painel Central', icon: getSectionIcon('painel') },
+                clientes: { title: 'Titulares', icon: getSectionIcon('clientes') },
+                processos: { title: 'Processos', icon: getSectionIcon('processos') },
+                prazos: { title: 'Prazos', icon: getSectionIcon('prazos') },
+                financeiro: { title: 'Financeiro', icon: getSectionIcon('financeiro') },
+                configuracoes: { title: 'Configurações', icon: getSectionIcon('configuracoes') },
+                equipe: { title: 'Configurações de Equipe', icon: getSectionIcon('equipe') }
+            };
+
+            const section = sectionMap[id] || { title: id, icon: '' };
+            pageTitle.textContent = section.title;
+            viewIcon.innerHTML = section.icon;
+
+            if (id === 'painel') {
+                renderDashboard(contentArea);
+            } else if (id === 'clientes') {
+                renderClientesView(contentArea, viewActions);
+            } else if (id === 'processos') {
+                renderProcessosView(contentArea, viewActions);
+            } else if (id === 'prazos') {
+                renderDeadlineDashboard(contentArea);
+            } else if (id === 'configuracoes') {
+                renderSettings(contentArea, currentTheme, (selectedTheme) => {
+                    currentTheme = applyTheme(selectedTheme);
+                });
+            } else if (id === 'equipe') {
+                if (currentProfile?.role !== 'admin') {
+                    navigate('painel');
+                    return;
+                }
+                renderTeamSettings(contentArea, {
+                    currentProfile,
+                    profiles: teamProfiles,
+                    loading: false,
+                    onRefresh: async () => {
+                        try {
+                            teamProfiles = await profileService.listProfiles();
+                            navigate('equipe');
+                        } catch (error) {
+                            showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível atualizar a lista da equipe.');
+                        }
+                    },
+                    onRoleChange: async (profileId, nextRole) => {
+                        try {
+                            await profileService.updateRole(profileId, nextRole);
+                            teamProfiles = await profileService.listProfiles();
+                            if (String(profileId) === String(currentProfile?.id)) {
+                                currentProfile = teamProfiles.find((profile) => String(profile.id) === String(profileId)) || currentProfile;
+                            }
+                            showNoticeModal('Permissão atualizada', 'A role do usuário foi atualizada com sucesso.');
+                            navigate('equipe');
+                        } catch (error) {
+                            showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível atualizar a role do usuário.');
+                        }
+                    }
+                });
+            } else {
+                renderEmptyState(contentArea, id);
+            }
+        };
+
+        function renderProcessosView(container, actionsContainer) {
+            const renderList = (restoreClientId = null, restoreProjectId = null) => {
+                renderProcessList(container, actionsContainer,
+                    (clientId) => showAddProcess(container, actionsContainer, renderList, clientId),
+                    (processId, clientId, projectId, action) => {
+                        if (action === 'edit') {
+                            showEditProcess(
+                                container,
+                                actionsContainer,
+                                processId,
+                                () => showProcessDetails(container, actionsContainer, processId, clientId, projectId, renderList)
+                            );
+                        } else {
+                            showProcessDetails(container, actionsContainer, processId, clientId, projectId, renderList);
+                        }
+                    },
+                    restoreClientId,
+                    restoreProjectId
+                );
+            };
+            renderList();
+        }
+
+        function showProcessDetails(container, actionsContainer, processId, clientId, projectId, renderList) {
+            container.innerHTML = '';
+            actionsContainer.innerHTML = '';
+
+            const onNavigate = {
+                toProcessList: () => renderList(null, null),
+                toClient: () => renderList(clientId, null),
+                toProject: projectId ? () => renderList(clientId, projectId) : null,
+                toEdit: (pid) => showEditProcess(container, actionsContainer, pid, () => showProcessDetails(container, actionsContainer, pid, clientId, projectId, renderList))
+            };
+
+            renderProcessDetails(container, actionsContainer, processId, onNavigate);
+        }
+
+        function showEditProcess(container, actionsContainer, processId, onComplete) {
+            const process = processStore.processes.find((item) => String(item.id) === String(processId));
+            if (!process) return;
+
+            container.innerHTML = '';
+            actionsContainer.innerHTML = '';
+
+            renderProcessForm(container, (updatedData) => {
+                processStore.updateProcess(processId, updatedData)
+                    .then((wasUpdated) => {
+                        if (!wasUpdated) {
+                            showNoticeModal('Erro ao salvar', 'Não foi possível atualizar este processo.');
+                            return;
+                        }
+                        showNoticeModal('Processo atualizado', 'As alterações foram salvas com sucesso.');
+                        onComplete();
+                    })
+                    .catch((error) => {
+                        showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível atualizar este processo.');
+                    });
+            }, onComplete, process);
+        }
+
+        function showAddProcess(container, actionsContainer, onComplete, clientId = null) {
+            container.innerHTML = '';
+            actionsContainer.innerHTML = '';
+            renderProcessForm(container, async (data) => {
+                try {
+                    await processStore.addProcess(data);
+                    onComplete();
+                } catch (error) {
+                    showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível salvar o processo.');
+                }
+            }, onComplete, null, clientId);
+        }
+
+        function renderClientesView(container, actionsContainer) {
+            const renderList = () => {
+                actionsContainer.innerHTML = '';
+                renderClientList(container, actionsContainer,
+                    (client) => showEditClient(container, actionsContainer, client, renderList),
+                    () => showAddClient(container, actionsContainer, renderList),
+                    (client) => showClientDetails(container, actionsContainer, client, renderList)
+                );
+            };
+            renderList();
+        }
+
+        function showClientDetails(container, actionsContainer, client, onBack) {
+            container.innerHTML = '';
+            actionsContainer.innerHTML = '';
+            renderClientDetails(container, client, onBack);
+        }
+
+        function showAddClient(container, actionsContainer, onComplete) {
+            container.innerHTML = '';
+            actionsContainer.innerHTML = '';
+            renderClientForm(container,
+                async (data) => {
+                    try {
+                        await clientStore.addClient(data);
+                        onComplete();
+                    } catch (error) {
+                        showNoticeModal('Não foi possível salvar', error?.message || 'Falha ao criar o titular.');
+                    }
+                },
+                onComplete
+            );
+        }
+
+        function showEditClient(container, actionsContainer, client, onComplete) {
+            container.innerHTML = '';
+            actionsContainer.innerHTML = '';
+            renderClientForm(container,
+                async (data) => {
+                    try {
+                        await clientStore.updateClient(client.id, data);
+                        onComplete();
+                    } catch (error) {
+                        showNoticeModal('Não foi possível salvar', error?.message || 'Falha ao atualizar o titular.');
+                    }
+                },
+                onComplete,
+                client
+            );
+        }
+
+        initDock(navigate);
+        navigate('painel');
+    };
+
+    const { data: authSubscription } = authService.onAuthStateChange(async (_event, session) => {
+        currentSession = session;
+        if (!session) {
+            currentProfile = null;
+            teamProfiles = [];
+            clientStore.reset();
+            processStore.reset();
+            navigateTo(LOGIN_ROUTE, true);
+        } else {
+            navigateTo(APP_ROUTE, true);
+        }
+        await renderRoute();
+    });
+
+    window.addEventListener('popstate', () => {
+        renderRoute().catch((error) => {
+            app.innerHTML = `<main id="main-content" style="padding: 3rem 2rem;"><div class="glass-card"><p>${error?.message || 'Erro inesperado de rota.'}</p></div></main>`;
+        });
+    });
 
     try {
-        await Promise.all([clientStore.ready, processStore.ready]);
+        currentSession = await authService.getSession();
+        if (currentSession && window.location.pathname === LOGIN_ROUTE) {
+            navigateTo(APP_ROUTE, true);
+        }
+        if (!currentSession && window.location.pathname !== LOGIN_ROUTE) {
+            navigateTo(LOGIN_ROUTE, true);
+        }
+        await renderRoute();
     } catch (error) {
         app.innerHTML = `
             <main id="main-content" style="padding: 3rem 2rem;">
                 <div class="glass-card" style="max-width: 760px; margin: 0 auto; padding: 2rem;">
-                    <p class="label-tech" style="color: var(--rose-500);">ERRO DE INTEGRAÇÃO</p>
-                    <h1 class="font-black" style="font-size: 2rem; margin-top: 0.5rem;">Não foi possível conectar ao Supabase.</h1>
-                    <p style="color: var(--slate-500); margin-top: 1rem; line-height: 1.6;">${error?.message || 'Verifique as tabelas no banco, as variáveis do .env e tente novamente.'}</p>
+                    <p class="label-tech" style="color: var(--rose-500);">ERRO DE AUTENTICAÇÃO</p>
+                    <h1 class="font-black" style="font-size: 2rem; margin-top: 0.5rem;">Não foi possível iniciar o aplicativo.</h1>
+                    <p style="color: var(--slate-500); margin-top: 1rem; line-height: 1.6;">${error?.message || 'Falha ao consultar a sessão do Supabase.'}</p>
                 </div>
             </main>
         `;
-        return;
-    }
-    
-    // Initial Layout Injection
-    app.innerHTML = `
-        ${renderHeader()}
-        <main id="main-content">
-            <div id="view-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3rem;">
-                <div id="view-title-group" style="display: flex; align-items: center; gap: 1rem;">
-                    <div id="view-icon" style="color: var(--slate-950);"></div>
-                    <h1 id="page-title" class="font-black" style="font-size: 2rem; text-transform: uppercase;">Painel Central</h1>
-                </div>
-                <div id="view-actions"></div>
-            </div>
-            <section id="content-area">
-                <!-- Content injected here -->
-            </section>
-        </main>
-        ${renderDock()}
-    `;
-
-    // Initialize Components
-    const contentArea = document.getElementById('content-area');
-    const pageTitle = document.getElementById('page-title');
-    const viewIcon = document.getElementById('view-icon');
-    const viewActions = document.getElementById('view-actions');
-
-    // Navigation Logic
-    const navigate = (id) => {
-        contentArea.innerHTML = '';
-        viewActions.innerHTML = '';
-        
-        const sectionMap = {
-            painel: { title: 'Painel Central', icon: getSectionIcon('painel') },
-            clientes: { title: 'Titulares', icon: getSectionIcon('clientes') },
-            processos: { title: 'Processos', icon: getSectionIcon('processos') },
-            prazos: { title: 'Prazos', icon: getSectionIcon('prazos') },
-            financeiro: { title: 'Financeiro', icon: getSectionIcon('financeiro') },
-            configuracoes: { title: 'Configurações', icon: getSectionIcon('configuracoes') }
-        };
-
-        const section = sectionMap[id] || { title: id, icon: '' };
-        pageTitle.textContent = section.title;
-        viewIcon.innerHTML = section.icon;
-        
-        if (id === 'painel') {
-            renderDashboard(contentArea);
-        } else if (id === 'clientes') {
-            renderClientesView(contentArea, viewActions);
-        } else if (id === 'processos') {
-            renderProcessosView(contentArea, viewActions);
-        } else if (id === 'prazos') {
-            renderDeadlineDashboard(contentArea);
-        } else if (id === 'configuracoes') {
-            renderSettings(contentArea, currentTheme, (selectedTheme) => {
-                currentTheme = applyTheme(selectedTheme);
-            });
-        } else {
-            renderEmptyState(contentArea, id);
-        }
-    };
-
-    function renderProcessosView(container, actionsContainer) {
-        const renderList = (restoreClientId = null, restoreProjectId = null) => {
-            renderProcessList(container, actionsContainer,
-                (clientId) => showAddProcess(container, actionsContainer, renderList, clientId),
-                (processId, clientId, projectId, action) => {
-                    if (action === 'edit') {
-                        showEditProcess(
-                            container,
-                            actionsContainer,
-                            processId,
-                            () => showProcessDetails(container, actionsContainer, processId, clientId, projectId, renderList)
-                        );
-                    } else {
-                        showProcessDetails(container, actionsContainer, processId, clientId, projectId, renderList);
-                    }
-                },
-                restoreClientId,
-                restoreProjectId
-            );
-        };
-        renderList();
     }
 
-    function showProcessDetails(container, actionsContainer, processId, clientId, projectId, renderList) {
-        container.innerHTML = '';
-        actionsContainer.innerHTML = '';
-
-        // Each breadcrumb level gets a precise navigation callback
-        const onNavigate = {
-            toProcessList: () => renderList(null, null),
-            toClient: () => renderList(clientId, null),
-            toProject: projectId ? () => renderList(clientId, projectId) : null,
-            toEdit: (pid) => showEditProcess(container, actionsContainer, pid, () => showProcessDetails(container, actionsContainer, pid, clientId, projectId, renderList))
-        };
-
-        renderProcessDetails(container, actionsContainer, processId, onNavigate);
-    }
-
-    function showEditProcess(container, actionsContainer, processId, onComplete) {
-        const process = processStore.processes.find(p => String(p.id) === String(processId));
-        if (!process) return;
-
-        container.innerHTML = '';
-        actionsContainer.innerHTML = '';
-
-        renderProcessForm(container, (updatedData) => {
-            processStore.updateProcess(processId, updatedData)
-                .then((wasUpdated) => {
-                    if (!wasUpdated) {
-                        showNoticeModal('Erro ao salvar', 'Não foi possível atualizar este processo.');
-                        return;
-                    }
-                    showNoticeModal('Processo atualizado', 'As alterações foram salvas com sucesso.');
-                    onComplete();
-                })
-                .catch((error) => {
-                    showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível atualizar este processo.');
-                });
-        }, onComplete, process);
-    }
-
-    function showAddProcess(container, actionsContainer, onComplete, clientId = null) {
-        container.innerHTML = '';
-        actionsContainer.innerHTML = '';
-        renderProcessForm(container, async (data) => {
-            try {
-                await processStore.addProcess(data);
-            } catch (error) {
-                showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível salvar o processo.');
-                return;
-            }
-            onComplete();
-        }, onComplete, null, clientId);
-    }
-
-    initDock(navigate);
-
-    // Initial Route
-    navigate('painel');
+    window.addEventListener('beforeunload', () => {
+        authSubscription?.subscription?.unsubscribe?.();
+    });
 });
 
 function renderDashboard(container) {
@@ -217,22 +392,22 @@ function renderDashboard(container) {
             <div class="glass-card animate-fade-in">
                 <h3 class="font-black" style="font-size: 1.5rem; margin-bottom: 1rem;">Visão Geral da GEOCONSULT</h3>
                 <p style="color: var(--slate-500); line-height: 1.6;">
-                    Seu ecossistema de gestão está operando normalmente. Esta nova visualização expandida permite que você acompanhe mais métricas simultaneamente, otimizando seu fluxo de trabalho em telas grandes.
+                    Seu ecossistema de gestão está operando normalmente. Esta visualização protegida concentra titulares, processos e prazos com autenticação integrada ao Supabase.
                 </p>
                 <div style="margin-top: 2rem; height: 100px; border-radius: 16px; background: var(--bg-main); border: 1px dashed var(--slate-200); display: flex; align-items: center; justify-content: center;">
                     <p class="label-tech">GRÁFICO DE DESEMPENHO EM BREVE</p>
                 </div>
             </div>
             <div class="glass-card animate-fade-in">
-                <h3 class="font-black" style="font-size: 1.2rem; margin-bottom: 1rem;">Atividades Recentes</h3>
+                <h3 class="font-black" style="font-size: 1.2rem; margin-bottom: 1rem;">Status do Ambiente</h3>
                 <div style="display: flex; flex-direction: column; gap: 1rem;">
                     <div style="padding-bottom: 1rem; border-bottom: 1px solid var(--slate-200);">
-                        <p class="font-black" style="font-size: 0.9rem;">Novo Titular: GEOCONSULT</p>
-                        <p class="label-tech" style="font-size: 8px;">HÁ 10 MINUTOS</p>
+                        <p class="font-black" style="font-size: 0.9rem;">Autenticação protegida</p>
+                        <p class="label-tech" style="font-size: 8px;">SUPABASE AUTH ATIVO</p>
                     </div>
                     <div style="padding-bottom: 1rem; border-bottom: 1px solid var(--slate-200);">
-                        <p class="font-black" style="font-size: 0.9rem;">Processo #4521 atualizado</p>
-                        <p class="label-tech" style="font-size: 8px;">HÁ 1 HORA</p>
+                        <p class="font-black" style="font-size: 0.9rem;">Banco conectado</p>
+                        <p class="label-tech" style="font-size: 8px;">CRUD ONLINE</p>
                     </div>
                 </div>
             </div>
@@ -248,6 +423,8 @@ function getSectionIcon(id) {
         prazos: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><circle cx="16" cy="16" r="3"></circle><path d="M16 14v2l1 1"></path></svg>`,
         financeiro: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path><circle cx="12" cy="12" r="10" stroke-opacity="0.2"></circle></svg>`,
         configuracoes: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`
+        ,
+        equipe: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`
     };
     return icons[id] || '';
 }
@@ -268,55 +445,4 @@ function renderEmptyState(container, id) {
             <p class="label-tech" style="margin-top: 1rem;">MÓDULO ${id.toUpperCase()} EM DESENVOLVIMENTO</p>
         </div>
     `;
-}
-
-function renderClientesView(container, actionsContainer) {
-    const renderList = () => {
-        actionsContainer.innerHTML = '';
-        renderClientList(container, actionsContainer,
-            (client) => showEditClient(container, actionsContainer, client, renderList), 
-            () => showAddClient(container, actionsContainer, renderList),
-            (client) => showClientDetails(container, actionsContainer, client, renderList)
-        );
-    };
-    renderList();
-}
-
-function showClientDetails(container, actionsContainer, client, onBack) {
-    container.innerHTML = '';
-    actionsContainer.innerHTML = '';
-    renderClientDetails(container, client, onBack);
-}
-
-function showAddClient(container, actionsContainer, onComplete) {
-    container.innerHTML = '';
-    actionsContainer.innerHTML = '';
-    renderClientForm(container, 
-        async (data) => {
-            try {
-                await clientStore.addClient(data);
-                onComplete();
-            } catch (error) {
-                showNoticeModal('Não foi possível salvar', error?.message || 'Falha ao criar o titular.');
-            }
-        },
-        onComplete
-    );
-}
-
-function showEditClient(container, actionsContainer, client, onComplete) {
-    container.innerHTML = '';
-    actionsContainer.innerHTML = '';
-    renderClientForm(container, 
-        async (data) => {
-            try {
-                await clientStore.updateClient(client.id, data);
-                onComplete();
-            } catch (error) {
-                showNoticeModal('Não foi possível salvar', error?.message || 'Falha ao atualizar o titular.');
-            }
-        },
-        onComplete,
-        client
-    );
 }

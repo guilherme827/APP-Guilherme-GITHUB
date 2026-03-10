@@ -14,7 +14,8 @@ export class ProcessStore {
     constructor() {
         this.processes = [];
         this.projects = [];
-        this.ready = this.hydrate();
+        this.ready = Promise.resolve();
+        this.isLoaded = false;
     }
 
     async hydrate() {
@@ -31,6 +32,20 @@ export class ProcessStore {
         this.rebuildProjects();
         this.sanitizeDeadlines();
         this.sanitizeExtractEvents();
+        this.isLoaded = true;
+    }
+
+    async load(force = false) {
+        if (this.isLoaded && !force) return this.ready;
+        this.ready = this.hydrate();
+        return this.ready;
+    }
+
+    reset() {
+        this.processes = [];
+        this.projects = [];
+        this.isLoaded = false;
+        this.ready = Promise.resolve();
     }
 
     rebuildProjects() {

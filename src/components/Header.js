@@ -1,5 +1,13 @@
 // Header Component
-export function renderHeader() {
+export function renderHeader(userEmail = '') {
+    const initials = String(userEmail || 'GC')
+        .split('@')[0]
+        .split(/[.\s_-]+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() || '')
+        .join('') || 'GC';
+
     return `
         <header id="top-header">
             <div class="header-container">
@@ -15,7 +23,12 @@ export function renderHeader() {
                 </div>
 
                 <div class="actions-area">
-                    <div class="avatar-emerald rounded-full">GA</div>
+                    <div class="header-user-meta">
+                        <p class="label-tech">SESSÃO ATIVA</p>
+                        <p class="header-user-email">${userEmail || 'usuario@sistema.com'}</p>
+                    </div>
+                    <button class="header-logout-btn" id="btn-logout" type="button">Sair</button>
+                    <div class="avatar-emerald rounded-full">${initials}</div>
                 </div>
             </div>
         </header>
@@ -114,7 +127,38 @@ export function renderHeader() {
             .actions-area {
                 display: flex;
                 align-items: center;
-                gap: 1.5rem;
+                gap: 1rem;
+            }
+
+            .header-user-meta {
+                text-align: right;
+            }
+
+            .header-user-email {
+                font-size: 0.82rem;
+                color: var(--slate-800);
+                font-weight: 600;
+                margin-top: 0.15rem;
+            }
+
+            .header-logout-btn {
+                border: 1px solid var(--slate-200);
+                background: rgba(255, 255, 255, 0.5);
+                color: var(--slate-900);
+                border-radius: 9999px;
+                padding: 0.55rem 1rem;
+                cursor: pointer;
+                font-size: 0.74rem;
+                font-weight: 700;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                transition: var(--transition);
+            }
+
+            .header-logout-btn:hover {
+                transform: translateY(-1px);
+                border-color: var(--primary);
+                color: var(--primary);
             }
 
             .avatar-emerald {
@@ -127,6 +171,20 @@ export function renderHeader() {
                 justify-content: center;
                 font-size: 0.75rem;
                 font-weight: 700;
+            }
+
+            @media (max-width: 900px) {
+                .search-area {
+                    display: none;
+                }
+
+                .header-user-meta {
+                    display: none;
+                }
+
+                .header-container {
+                    padding: 0 1rem;
+                }
             }
         </style>
     `;
