@@ -113,9 +113,9 @@ export function renderClientList(container, actionsContainer, onEdit, onAdd, onV
             showConfirmModal(
                 'Excluir Titular',
                 `Deseja realmente excluir o titular "${name}"? Esta ação removerá todos os dados do titular e não pode ser desfeita.`,
-                () => {
+                async () => {
                     try {
-                        clientStore.deleteClient(Number(id));
+                        await clientStore.deleteClient(Number(id));
                         renderClientList(container, actionsContainer, onEdit, onAdd, onView);
                     } catch (err) {
                         showNoticeModal('Não foi possível excluir', err.message);

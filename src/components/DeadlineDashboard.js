@@ -258,10 +258,9 @@ function renderDeadlineList(container, allDeadlines, category, onBack, onRefresh
     container.querySelector('#btn-back-dashboard').onclick = onBack;
     
     container.querySelectorAll('.btn-action-status').forEach(btn => {
-        btn.onclick = () => {
+        btn.onclick = async () => {
             const { pid, did, status } = btn.dataset;
-            processStore.updateDeadlineStatus(Number(pid), did, status);
-            // Refresh main view to re-calculate everything from store
+            await processStore.updateDeadlineStatus(Number(pid), did, status);
             onRefresh('list', category);
         };
     });

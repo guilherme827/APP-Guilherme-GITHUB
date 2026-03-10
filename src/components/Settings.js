@@ -22,8 +22,8 @@ const THEME_OPTIONS = [
 ];
 
 export function renderSettings(container, currentTheme, onThemeChange) {
-    const persistenceLabel = 'Modo Local com Mock Data';
-    const persistenceDescription = 'O app esta rodando sem integracoes externas. Os dados exibidos sao locais e servem para restaurar o fluxo visual no localhost.';
+    const persistenceLabel = 'Supabase Ativo';
+    const persistenceDescription = 'Os dados de titulares e processos estao sendo carregados diretamente do banco Supabase configurado neste ambiente.';
 
     container.innerHTML = `
         <div class="glass-card animate-fade-in" style="max-width: 900px; margin: 0 auto;">

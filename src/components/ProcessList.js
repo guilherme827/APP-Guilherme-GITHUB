@@ -459,13 +459,17 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                     showConfirmModal(
                         'Excluir Processo',
                         'Tem certeza que deseja excluir este processo? Todos os dados vinculados a ele serão perdidos permanentemente.',
-                        () => {
-                            const removed = processStore.deleteProcess(id);
-                            if (!removed) {
-                                showNoticeModal('Erro ao excluir', 'Não foi possível excluir o processo. Verifique o armazenamento local.');
-                                return;
+                        async () => {
+                            try {
+                                const removed = await processStore.deleteProcess(id);
+                                if (!removed) {
+                                    showNoticeModal('Erro ao excluir', 'Não foi possível excluir o processo.');
+                                    return;
+                                }
+                                render();
+                            } catch (error) {
+                                showNoticeModal('Erro ao excluir', error?.message || 'Não foi possível excluir o processo.');
                             }
-                            render();
                         }
                     );
                 } else if (act === 'edit') {

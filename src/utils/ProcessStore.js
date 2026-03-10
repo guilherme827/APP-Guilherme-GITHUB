@@ -1,54 +1,56 @@
-import { MOCK_PROCESSES, MOCK_PROJECTS } from '../data/mockData.js';
+import { supabase } from '../lib/supabaseClient.js';
+import {
+    buildProjectId,
+    buildProjectsFromProcesses,
+    mapProcessModelToRow,
+    mapProcessRowToModel
+} from './supabaseMappers.js';
 
-// Simple State Management for Processes and Projects
+function getSupabaseMessage(error, fallback) {
+    return error?.message || fallback;
+}
+
 export class ProcessStore {
     constructor() {
-        this.processesStorageKey = 'control_processes';
-        this.projectsStorageKey = 'control_projects';
-        this.processes = this.parseStoredArray(this.processesStorageKey, MOCK_PROCESSES);
-        this.projects = this.parseStoredArray(this.projectsStorageKey, MOCK_PROJECTS);
-        this.sanitizeDeadlines();
-        this.sanitizeExtractEvents();
-        this.saveProcesses();
-        this.saveProjects();
-        this.ready = Promise.resolve();
+        this.processes = [];
+        this.projects = [];
+        this.ready = this.hydrate();
     }
 
-    parseStoredArray(key, fallback = []) {
-        try {
-            const raw = localStorage.getItem(key);
-            if (!raw) return Array.isArray(fallback) ? [...fallback] : [];
-            const parsed = JSON.parse(raw);
-            return Array.isArray(parsed) ? parsed : [...fallback];
-        } catch {
-            return Array.isArray(fallback) ? [...fallback] : [];
+    async hydrate() {
+        const { data, error } = await supabase
+            .from('processes')
+            .select('*')
+            .order('id', { ascending: true });
+
+        if (error) {
+            throw new Error(getSupabaseMessage(error, 'Falha ao carregar processos no Supabase.'));
         }
+
+        this.processes = (data || []).map(mapProcessRowToModel);
+        this.rebuildProjects();
+        this.sanitizeDeadlines();
+        this.sanitizeExtractEvents();
+    }
+
+    rebuildProjects() {
+        this.projects = buildProjectsFromProcesses(this.processes);
     }
 
     sanitizeDeadlines() {
-        let modified = false;
-        this.processes = this.processes.map(p => {
-            if (p.deadlines && p.deadlines.length > 0) {
-                const sanitized = p.deadlines.map((d, idx) => {
-                    if (!d.id || !d.status) {
-                        modified = true;
-                        return {
-                            ...d,
-                            id: d.id || `${p.id}-${idx}-${Date.now()}`,
-                            status: d.status || 'pending'
-                        };
-                    }
-                    return d;
-                });
-                return { ...p, deadlines: sanitized };
-            }
-            return p;
-        });
-        if (modified) this.saveProcesses();
+        this.processes = this.processes.map((process) => ({
+            ...process,
+            deadlines: Array.isArray(process.deadlines)
+                ? process.deadlines.map((deadline, index) => ({
+                    ...deadline,
+                    id: deadline.id || `${process.id}-${index}-${Date.now()}`,
+                    status: deadline.status || 'pending'
+                }))
+                : []
+        }));
     }
 
     sanitizeExtractEvents() {
-        let modified = false;
         const hasDocSource = (doc) => !!(doc?.base64 || doc?.storagePath);
         this.processes = this.processes.map((process) => {
             const normalizedEvents = Array.isArray(process.events) ? process.events : [];
@@ -71,23 +73,13 @@ export class ProcessStore {
                 };
             });
 
-            if (!Array.isArray(process.events)) {
-                modified = true;
-            }
-
-            const syncedEvents = this.syncInitialExtractEvent({ ...process, events });
-            if (JSON.stringify(events) !== JSON.stringify(syncedEvents)) {
-                modified = true;
-            }
-            events = syncedEvents;
+            events = this.syncInitialExtractEvent({ ...process, events });
 
             return {
                 ...process,
                 events
             };
         });
-
-        if (modified) this.saveProcesses();
     }
 
     getInitialEventType(fase) {
@@ -187,23 +179,33 @@ export class ProcessStore {
         return events;
     }
 
-    // Projects logic
     getProjectsByClient(clientId) {
-        return this.projects.filter(p => p.clientId == clientId);
+        return this.projects.filter((project) => String(project.clientId) === String(clientId));
     }
 
     addProject(project) {
-        const newProject = { ...project, id: Date.now() };
-        this.projects.push(newProject);
-        this.saveProjects();
+        const normalizedName = String(project?.name || '').trim();
+        if (!normalizedName) return null;
+
+        const existing = this.projects.find((current) =>
+            String(current.clientId) === String(project.clientId)
+            && current.name.toLowerCase().trim() === normalizedName.toLowerCase()
+        );
+        if (existing) return existing;
+
+        const newProject = {
+            id: buildProjectId(project.clientId, normalizedName),
+            clientId: Number(project.clientId),
+            name: normalizedName
+        };
+        this.projects = [...this.projects, newProject].sort((a, b) => a.name.localeCompare(b.name));
         return newProject;
     }
 
-    // Memory logic for autocomplete
     getUniqueFieldValues(field) {
         const values = this.processes
-            .map(p => p[field])
-            .filter(v => v && v.trim() !== '');
+            .map((process) => process[field])
+            .filter((value) => value && value.trim() !== '');
         return [...new Set(values)].sort();
     }
 
@@ -220,13 +222,13 @@ export class ProcessStore {
         const sourceKey = this.normalizeLearningKey(sourceValue);
         if (!sourceKey) return '';
         const countByValue = new Map();
+
         this.processes.forEach((process) => {
             const pair = mapper(process);
             if (!pair) return;
             const currentSourceKey = this.normalizeLearningKey(pair.source);
             const mappedValue = String(pair.mapped || '').trim();
-            if (!currentSourceKey || !mappedValue) return;
-            if (currentSourceKey !== sourceKey) return;
+            if (!currentSourceKey || !mappedValue || currentSourceKey !== sourceKey) return;
             countByValue.set(mappedValue, (countByValue.get(mappedValue) || 0) + 1);
         });
 
@@ -255,46 +257,41 @@ export class ProcessStore {
         }));
     }
 
-    // Processes logic
     getProcessesByClient(clientId) {
-        return this.processes.filter(p => p.clientId == clientId && !p.projectId);
+        return this.processes.filter((process) => String(process.clientId) === String(clientId) && !process.projectId);
     }
 
     getProcessesByProject(projectId) {
-        return this.processes.filter(p => p.projectId == projectId);
+        return this.processes.filter((process) => String(process.projectId) === String(projectId));
+    }
+
+    resolveProject(projectData) {
+        if (projectData.projectId) {
+            const existing = this.projects.find((project) => String(project.id) === String(projectData.projectId));
+            if (existing) return existing;
+        }
+
+        const projectName = String(projectData.projectName || '').trim();
+        if (!projectName) return null;
+        return this.addProject({
+            clientId: Number(projectData.clientId),
+            name: projectName
+        });
     }
 
     async addProcess(processData) {
-        let projectId = processData.projectId;
-        
-        // Auto-create project if name provided but not ID
-        if (processData.projectName && !projectId) {
-            const existingProject = this.projects.find(p => 
-                p.clientId == processData.clientId && 
-                p.name.toLowerCase().trim() === processData.projectName.toLowerCase().trim()
-            );
-            
-            if (existingProject) {
-                projectId = existingProject.id;
-            } else {
-                const newProject = this.addProject({
-                    clientId: Number(processData.clientId),
-                    name: processData.projectName.trim()
-                });
-                projectId = newProject.id;
-            }
-        }
-
+        const project = this.resolveProject(processData);
         const hasDocSource = (doc) => !!(doc?.base64 || doc?.storagePath);
-        const newProcess = { 
-            ...processData, 
-            id: Date.now(),
-            projectId: projectId ? Number(projectId) : null,
+
+        const preparedProcess = {
+            ...processData,
+            projectId: project?.id || null,
+            projectName: project?.name || '',
             clientId: Number(processData.clientId),
-            deadlines: (processData.deadlines || []).map((d, idx) => ({
-                ...d,
-                id: d.id || `${Date.now()}-${idx}`,
-                status: d.status || 'pending'
+            deadlines: (processData.deadlines || []).map((deadline, index) => ({
+                ...deadline,
+                id: deadline.id || `${Date.now()}-${index}`,
+                status: deadline.status || 'pending'
             })),
             events: (processData.events || []).map((event, eventIndex) => ({
                 id: event.id || `${Date.now()}-event-${eventIndex}`,
@@ -312,170 +309,146 @@ export class ProcessStore {
                 })).filter((doc) => hasDocSource(doc))
             }))
         };
-        
-        // Remove helper field before saving
-        delete newProcess.projectName;
-        newProcess.events = this.syncInitialExtractEvent(newProcess);
 
-        const nextProcesses = [...this.processes, newProcess];
-        const saved = this.saveProcesses(nextProcesses);
-        if (!saved) {
-            throw new Error('Não foi possível salvar o processo. Verifique o espaço de armazenamento do navegador.');
+        delete preparedProcess.projectName;
+        preparedProcess.events = this.syncInitialExtractEvent(preparedProcess);
+
+        const payload = mapProcessModelToRow(preparedProcess, project?.name || '');
+        const { data, error } = await supabase
+            .from('processes')
+            .insert(payload)
+            .select()
+            .single();
+
+        if (error) {
+            throw new Error(getSupabaseMessage(error, 'Não foi possível salvar o processo.'));
         }
-        this.processes = nextProcesses;
-        return newProcess;
+
+        const created = mapProcessRowToModel(data);
+        this.processes = [...this.processes, created];
+        this.rebuildProjects();
+        return created;
     }
 
-    updateProcess(id, updatedData) {
-        const targetId = String(id);
-        let updated = false;
-        const hasDocSource = (doc) => !!(doc?.base64 || doc?.storagePath);
-        const nextProcesses = this.processes.map(p => {
-            if (String(p.id) === targetId) {
-                updated = true;
-                const newData = { ...p, ...updatedData };
-                if (newData.deadlines) {
-                    newData.deadlines = newData.deadlines.map((d, idx) => ({
-                        ...d,
-                        id: d.id || `${Date.now()}-${idx}`,
-                        status: d.status || 'pending'
-                    }));
-                }
-                if (newData.events) {
-                    newData.events = newData.events.map((event, eventIndex) => ({
-                        id: event.id || `${Date.now()}-event-${eventIndex}`,
-                        isInitial: event.isInitial === true || String(event.id || '').includes('event-inicial'),
-                        usesProcessDocument: event.usesProcessDocument === true,
-                        type: event.type || 'movimentacao',
-                        description: event.description || '',
-                        date: event.date || '',
-                        documents: (event.documents || []).map((doc, docIndex) => ({
-                            id: doc.id || `${Date.now()}-event-${eventIndex}-doc-${docIndex}`,
-                            name: doc.name || 'documento',
-                            type: doc.type || 'application/octet-stream',
-                            base64: doc.base64 || '',
-                            storagePath: doc.storagePath || ''
-                        })).filter((doc) => hasDocSource(doc))
-                    }));
-                }
-                newData.events = this.syncInitialExtractEvent(newData);
-                return newData;
-            }
-            return p;
+    async updateProcess(id, updatedData) {
+        const existingProcess = this.processes.find((process) => String(process.id) === String(id));
+        if (!existingProcess) return false;
+
+        const project = this.resolveProject({
+            clientId: updatedData.clientId || existingProcess.clientId,
+            projectId: updatedData.projectId,
+            projectName: updatedData.projectName
         });
-        if (updated) {
-            const saved = this.saveProcesses(nextProcesses);
-            if (!saved) return false;
-            this.processes = nextProcesses;
-        }
-        return updated;
-    }
 
-    addProcessEvent(processId, eventData) {
-        const targetId = String(processId);
-        let changed = false;
         const hasDocSource = (doc) => !!(doc?.base64 || doc?.storagePath);
-        const nextProcesses = this.processes.map((process) => {
-            if (String(process.id) !== targetId) return process;
-            changed = true;
-            const currentEvents = Array.isArray(process.events) ? process.events : [];
-            const currentDeadlines = Array.isArray(process.deadlines) ? process.deadlines : [];
-            const newEvent = {
-                id: eventData.id || `${processId}-event-${Date.now()}`,
-                usesProcessDocument: false,
-                type: eventData.type || 'movimentacao',
-                description: eventData.description || '',
-                date: eventData.date || '',
-                documents: (eventData.documents || []).map((doc, index) => ({
-                    id: doc.id || `${processId}-doc-${Date.now()}-${index}`,
+        const nextProcess = {
+            ...existingProcess,
+            ...updatedData,
+            clientId: Number(updatedData.clientId || existingProcess.clientId),
+            projectId: project?.id || null,
+            projectName: project?.name || '',
+            deadlines: (updatedData.deadlines || existingProcess.deadlines || []).map((deadline, index) => ({
+                ...deadline,
+                id: deadline.id || `${Date.now()}-${index}`,
+                status: deadline.status || 'pending'
+            })),
+            events: (updatedData.events || existingProcess.events || []).map((event, eventIndex) => ({
+                id: event.id || `${Date.now()}-event-${eventIndex}`,
+                isInitial: event.isInitial === true || String(event.id || '').includes('event-inicial'),
+                usesProcessDocument: event.usesProcessDocument === true,
+                type: event.type || 'movimentacao',
+                description: event.description || '',
+                date: event.date || '',
+                documents: (event.documents || []).map((doc, docIndex) => ({
+                    id: doc.id || `${Date.now()}-event-${eventIndex}-doc-${docIndex}`,
                     name: doc.name || 'documento',
                     type: doc.type || 'application/octet-stream',
                     base64: doc.base64 || '',
                     storagePath: doc.storagePath || ''
                 })).filter((doc) => hasDocSource(doc))
-            };
+            }))
+        };
 
-            const normalizedType = String(newEvent.type || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
-            const shouldCreateDeadline = normalizedType === 'exigencia';
-            const generatedDeadline = shouldCreateDeadline ? [{
-                id: `${processId}-deadline-${Date.now()}`,
-                desc: `Cumprir exigência: ${newEvent.description || 'Sem descrição'}`,
-                date: '',
-                status: 'pending'
-            }] : [];
+        nextProcess.events = this.syncInitialExtractEvent(nextProcess);
+        const payload = mapProcessModelToRow(nextProcess, project?.name || '');
 
-            return {
-                ...process,
-                events: [...currentEvents, newEvent],
-                deadlines: [...currentDeadlines, ...generatedDeadline]
-            };
-        });
-        if (!changed) return false;
-        const saved = this.saveProcesses(nextProcesses);
-        if (!saved) return false;
-        this.processes = nextProcesses;
-        return true;
-    }
+        const { data, error } = await supabase
+            .from('processes')
+            .update(payload)
+            .eq('id', id)
+            .select()
+            .single();
 
-    updateDeadlineStatus(processId, deadlineId, newStatus) {
-        const targetProcessId = String(processId);
-        const targetDeadlineId = String(deadlineId);
-        let changed = false;
-        const nextProcesses = this.processes.map(p => {
-            if (String(p.id) === targetProcessId) {
-                changed = true;
-                return {
-                    ...p,
-                    deadlines: p.deadlines.map(d => 
-                        String(d.id) === targetDeadlineId ? { ...d, status: newStatus } : d
-                    )
-                };
-            }
-            return p;
-        });
-        if (!changed) return false;
-        const saved = this.saveProcesses(nextProcesses);
-        if (!saved) return false;
-        this.processes = nextProcesses;
-        return true;
-    }
-
-    deleteProcess(id) {
-        const targetId = String(id);
-        const nextProcesses = this.processes.filter(p => String(p.id) !== targetId);
-        const changed = nextProcesses.length !== this.processes.length;
-        if (!changed) return false;
-        const saved = this.saveProcesses(nextProcesses);
-        if (!saved) return false;
-        this.processes = nextProcesses;
-        return true;
-    }
-
-    saveProcesses(processesToSave = this.processes) {
-        let localSaved = false;
-        let isQuotaError = false;
-        try {
-            localStorage.setItem(this.processesStorageKey, JSON.stringify(processesToSave));
-            localSaved = true;
-        } catch (error) {
-            isQuotaError = typeof error?.name === 'string' && error.name.toLowerCase().includes('quota');
-            console.error(
-                isQuotaError
-                    ? 'Falha ao salvar processos: limite de armazenamento local atingido.'
-                    : 'Falha ao salvar processos no localStorage:',
-                error
-            );
+        if (error) {
+            throw new Error(getSupabaseMessage(error, 'Não foi possível atualizar o processo.'));
         }
-        if (localSaved) return true;
-        return isQuotaError;
+
+        const updated = mapProcessRowToModel(data);
+        this.processes = this.processes.map((process) => (String(process.id) === String(id) ? updated : process));
+        this.rebuildProjects();
+        return true;
     }
 
-    saveProjects() {
-        try {
-            localStorage.setItem(this.projectsStorageKey, JSON.stringify(this.projects));
-        } catch (error) {
-            console.error('Falha ao salvar projetos no localStorage:', error);
+    async addProcessEvent(processId, eventData) {
+        const targetProcess = this.processes.find((process) => String(process.id) === String(processId));
+        if (!targetProcess) return false;
+
+        const hasDocSource = (doc) => !!(doc?.base64 || doc?.storagePath);
+        const newEvent = {
+            id: eventData.id || `${processId}-event-${Date.now()}`,
+            usesProcessDocument: false,
+            type: eventData.type || 'movimentacao',
+            description: eventData.description || '',
+            date: eventData.date || '',
+            documents: (eventData.documents || []).map((doc, index) => ({
+                id: doc.id || `${processId}-doc-${Date.now()}-${index}`,
+                name: doc.name || 'documento',
+                type: doc.type || 'application/octet-stream',
+                base64: doc.base64 || '',
+                storagePath: doc.storagePath || ''
+            })).filter((doc) => hasDocSource(doc))
+        };
+
+        const normalizedType = String(newEvent.type || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+        const shouldCreateDeadline = normalizedType === 'exigencia';
+        const generatedDeadline = shouldCreateDeadline ? [{
+            id: `${processId}-deadline-${Date.now()}`,
+            desc: `Cumprir exigência: ${newEvent.description || 'Sem descrição'}`,
+            date: '',
+            status: 'pending'
+        }] : [];
+
+        return this.updateProcess(processId, {
+            events: [...(targetProcess.events || []), newEvent],
+            deadlines: [...(targetProcess.deadlines || []), ...generatedDeadline]
+        });
+    }
+
+    async updateDeadlineStatus(processId, deadlineId, newStatus) {
+        const targetProcess = this.processes.find((process) => String(process.id) === String(processId));
+        if (!targetProcess) return false;
+
+        const nextDeadlines = (targetProcess.deadlines || []).map((deadline) =>
+            String(deadline.id) === String(deadlineId) ? { ...deadline, status: newStatus } : deadline
+        );
+
+        return this.updateProcess(processId, { deadlines: nextDeadlines });
+    }
+
+    async deleteProcess(id) {
+        const { error } = await supabase
+            .from('processes')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            throw new Error(getSupabaseMessage(error, 'Não foi possível excluir o processo.'));
         }
+
+        const changed = this.processes.some((process) => String(process.id) === String(id));
+        this.processes = this.processes.filter((process) => String(process.id) !== String(id));
+        this.rebuildProjects();
+        return changed;
     }
 }
 

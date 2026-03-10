@@ -31,9 +31,23 @@ function applyTheme(theme) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-    await Promise.all([clientStore.ready, processStore.ready]);
     const app = document.getElementById('app');
     let currentTheme = applyTheme(getStoredTheme());
+
+    try {
+        await Promise.all([clientStore.ready, processStore.ready]);
+    } catch (error) {
+        app.innerHTML = `
+            <main id="main-content" style="padding: 3rem 2rem;">
+                <div class="glass-card" style="max-width: 760px; margin: 0 auto; padding: 2rem;">
+                    <p class="label-tech" style="color: var(--rose-500);">ERRO DE INTEGRAÇÃO</p>
+                    <h1 class="font-black" style="font-size: 2rem; margin-top: 0.5rem;">Não foi possível conectar ao Supabase.</h1>
+                    <p style="color: var(--slate-500); margin-top: 1rem; line-height: 1.6;">${error?.message || 'Verifique as tabelas no banco, as variáveis do .env e tente novamente.'}</p>
+                </div>
+            </main>
+        `;
+        return;
+    }
     
     // Initial Layout Injection
     app.innerHTML = `
@@ -140,13 +154,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         actionsContainer.innerHTML = '';
 
         renderProcessForm(container, (updatedData) => {
-            const wasUpdated = processStore.updateProcess(processId, updatedData);
-            if (!wasUpdated) {
-                showNoticeModal('Erro ao salvar', 'Não foi possível atualizar este processo. Verifique o armazenamento local do navegador e tente novamente.');
-                return;
-            }
-            showNoticeModal('Processo atualizado', 'As alterações foram salvas com sucesso.');
-            onComplete();
+            processStore.updateProcess(processId, updatedData)
+                .then((wasUpdated) => {
+                    if (!wasUpdated) {
+                        showNoticeModal('Erro ao salvar', 'Não foi possível atualizar este processo.');
+                        return;
+                    }
+                    showNoticeModal('Processo atualizado', 'As alterações foram salvas com sucesso.');
+                    onComplete();
+                })
+                .catch((error) => {
+                    showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível atualizar este processo.');
+                });
         }, onComplete, process);
     }
 
@@ -171,6 +190,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function renderDashboard(container) {
+    const totalPendingDeadlines = processStore.processes.reduce((count, process) => (
+        count + (process.deadlines || []).filter((deadline) => deadline.status === 'pending').length
+    ), 0);
+
     container.innerHTML = `
         <div class="stats-grid animate-fade-in" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; margin-bottom: 1.5rem;">
             <div class="glass-card stat-card" style="padding: 1.25rem;">
@@ -179,11 +202,11 @@ function renderDashboard(container) {
             </div>
             <div class="glass-card stat-card" style="padding: 1.25rem;">
                 <p class="label-tech" style="font-size: 9px;">PROCESSOS ATIVOS</p>
-                <h3 class="font-black" style="font-size: 1.75rem; color: var(--primary);">42</h3>
+                <h3 class="font-black" style="font-size: 1.75rem; color: var(--primary);">${processStore.processes.length}</h3>
             </div>
             <div class="glass-card stat-card" style="padding: 1.25rem;">
                 <p class="label-tech" style="font-size: 9px;">PRAZOS CRÍTICOS</p>
-                <h3 class="font-black" style="font-size: 1.75rem; color: var(--rose-500);">08</h3>
+                <h3 class="font-black" style="font-size: 1.75rem; color: var(--rose-500);">${totalPendingDeadlines}</h3>
             </div>
             <div class="glass-card stat-card" style="padding: 1.25rem;">
                 <p class="label-tech" style="font-size: 9px;">FATURAMENTO MÊS</p>
@@ -269,9 +292,13 @@ function showAddClient(container, actionsContainer, onComplete) {
     container.innerHTML = '';
     actionsContainer.innerHTML = '';
     renderClientForm(container, 
-        (data) => {
-            clientStore.addClient(data);
-            onComplete();
+        async (data) => {
+            try {
+                await clientStore.addClient(data);
+                onComplete();
+            } catch (error) {
+                showNoticeModal('Não foi possível salvar', error?.message || 'Falha ao criar o titular.');
+            }
         },
         onComplete
     );
@@ -281,9 +308,13 @@ function showEditClient(container, actionsContainer, client, onComplete) {
     container.innerHTML = '';
     actionsContainer.innerHTML = '';
     renderClientForm(container, 
-        (data) => {
-            clientStore.updateClient(client.id, data);
-            onComplete();
+        async (data) => {
+            try {
+                await clientStore.updateClient(client.id, data);
+                onComplete();
+            } catch (error) {
+                showNoticeModal('Não foi possível salvar', error?.message || 'Falha ao atualizar o titular.');
+            }
         },
         onComplete,
         client
