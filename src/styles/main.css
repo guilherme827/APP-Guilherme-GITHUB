@@ -1,0 +1,157 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;900&display=swap');
+
+:root {
+    /* SaaS Premium Palette (Light Mode) */
+    --bg-main: #F8FAFC;         /* Slate-50 */
+    --primary: #10B981;        /* Emerald-500 */
+    --primary-hover: #059669;
+    
+    --slate-950: #020617;      /* Titles & Dark Buttons */
+    --slate-900: #0F172A;
+    --slate-800: #1E293B;
+    --slate-700: #334155;
+    --slate-600: #475569;
+    --slate-500: #64748B;      /* Icons / Secondary Text */
+    --slate-400: #94A3B8;
+    --slate-300: #CBD5E1;
+    --slate-200: #E2E8F0;      /* Dividers */
+    --slate-100: #F1F5F9;
+    --slate-50: #F8FAFC;
+    
+    --rose-100: #FFE4E6;
+    --rose-50: #FFF1F2;
+    --rose-500: #F43F5E;       /* Critical */
+    --amber-500: #F59E0B;      /* Warning */
+    --blue-500: #3B82F6;       /* Neutral/Clients */
+    --primary-light: #D1FAE5;
+
+    /* Typography Labels (Technical Elegance) */
+    --label-size: 10px;
+    --label-spacing: 0.15em;
+    
+    /* Effects & Glass */
+    --glass-header: rgba(255, 255, 255, 0.8);
+    --glass-dock: rgba(255, 255, 255, 0.7);
+    --blur-md: blur(12px);
+    --blur-xl: blur(24px);
+    --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.06);
+    --shadow-deep: 0 8px 32px rgba(0, 0, 0, 0.08);
+    --border-glass: rgba(255, 255, 255, 0.6);
+    --card-bg: #FFFFFF;
+    --dock-hover-bg: #FFFFFF;
+    
+    --transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-font-smoothing: antialiased;
+}
+
+body {
+    font-family: 'Outfit', sans-serif;
+    background-color: var(--bg-main);
+    color: var(--slate-900);
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+/* Typography Utils */
+.font-black { font-weight: 900; letter-spacing: -0.02em; }
+.label-tech {
+    font-size: var(--label-size);
+    text-transform: uppercase;
+    letter-spacing: var(--label-spacing);
+    color: var(--slate-500);
+    font-weight: 600;
+}
+
+/* Rounded Utilities */
+.rounded-3xl { border-radius: 24px; }
+.rounded-full { border-radius: 9999px; }
+
+/* Layout Components */
+#app {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* Page Content */
+#main-content {
+    padding: 80px 40px 140px; /* Reduced top padding, fixed side padding */
+    max-width: 1800px; /* Even wider for modern monitors */
+    margin: 0 auto;
+    width: 100%;
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.6s ease forwards;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(15px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Buttons */
+.btn-pill {
+    padding: 0.6rem 1.4rem;
+    border-radius: 9999px;
+    border: none;
+    cursor: pointer;
+    font-size: var(--label-size);
+    text-transform: uppercase;
+    letter-spacing: var(--label-spacing);
+    font-weight: 700;
+    transition: var(--transition);
+}
+
+.btn-black {
+    background: var(--slate-950);
+    color: white;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.btn-black:hover {
+    transform: scale(1.03);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+}
+
+/* Card Style Override */
+.glass-card {
+    background: var(--card-bg);
+    border: 1px solid var(--slate-200);
+    box-shadow: var(--shadow-deep);
+    padding: 2.5rem;
+    border-radius: 32px;
+}
+/* Data Table Styles */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+}
+
+.data-table th {
+    text-align: left;
+    padding: 1rem;
+    border-bottom: 2px solid var(--slate-100);
+    color: var(--slate-400);
+}
+
+.data-table td {
+    padding: 1.25rem 1rem;
+    border-bottom: 1px solid var(--slate-100);
+    vertical-align: middle;
+}
+
+.data-table tr:last-child td {
+    border-bottom: none;
+}
+
+.data-table tr:hover {
+    background: var(--bg-main);
+}
