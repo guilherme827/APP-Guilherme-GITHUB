@@ -9,7 +9,7 @@ export function renderClientForm(container, onSave, onCancel, editData = null) {
     const renderFormContent = () => {
         const isPF = clientType === 'PF';
         return `
-            <div class="glass-card animate-fade-in" style="width: 100%; margin: 0 auto; padding: 4rem;">
+            <div class="glass-card animate-fade-in client-form-shell" style="width: 100%; margin: 0 auto; padding: 4rem;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3rem;">
                     <div>
                         <h2 class="font-black" style="font-size: 2rem;">${editData ? 'Editar Titular' : 'Novo Titular'}</h2>
@@ -29,24 +29,24 @@ export function renderClientForm(container, onSave, onCancel, editData = null) {
                             ${isPF ? `
                                 <div class="form-group">
                                     <label class="label-tech">NOME COMPLETO</label>
-                                    <input type="text" name="nome" value="${escapeHtml(editData?.nome || '')}" required placeholder="Ex: João Silva">
+                                    <div class="field-shell"><input type="text" name="nome" value="${escapeHtml(editData?.nome || '')}" required placeholder="Ex: João Silva"></div>
                                 </div>
                                 <div class="form-group">
                                     <label class="label-tech">CPF</label>
-                                    <input type="text" name="cpf" value="${escapeHtml(editData?.cpf || '')}" required placeholder="000.000.000-00">
+                                    <div class="field-shell"><input type="text" name="cpf" value="${escapeHtml(editData?.cpf || '')}" required placeholder="000.000.000-00"></div>
                                 </div>
                             ` : `
                                 <div class="form-group">
                                     <label class="label-tech">NOME FANTASIA</label>
-                                    <input type="text" name="nomeFantasia" value="${escapeHtml(editData?.nomeFantasia || '')}" required placeholder="Ex: Geoconsult">
+                                    <div class="field-shell"><input type="text" name="nomeFantasia" value="${escapeHtml(editData?.nomeFantasia || '')}" required placeholder="Ex: Geoconsult"></div>
                                 </div>
                                 <div class="form-group" style="grid-column: span 1;">
                                     <label class="label-tech">CNPJ</label>
-                                    <input type="text" name="cnpj" value="${escapeHtml(editData?.cnpj || '')}" required placeholder="00.000.000/0000-00">
+                                    <div class="field-shell"><input type="text" name="cnpj" value="${escapeHtml(editData?.cnpj || '')}" required placeholder="00.000.000/0000-00"></div>
                                 </div>
                                 <div class="form-group" style="grid-column: span 2;">
                                     <label class="label-tech">NOME EMPRESARIAL / RAZÃO SOCIAL</label>
-                                    <input type="text" name="nomeEmpresarial" value="${escapeHtml(editData?.nomeEmpresarial || '')}" required placeholder="Ex: Geoconsult Gestão LTDA">
+                                    <div class="field-shell"><input type="text" name="nomeEmpresarial" value="${escapeHtml(editData?.nomeEmpresarial || '')}" required placeholder="Ex: Geoconsult Gestão LTDA"></div>
                                 </div>
                             `}
                         </div>
@@ -58,11 +58,11 @@ export function renderClientForm(container, onSave, onCancel, editData = null) {
                         <div class="grid-2">
                             <div class="form-group">
                                 <label class="label-tech">EMAIL</label>
-                                <input type="email" name="email" value="${escapeHtml(editData?.email || '')}" placeholder="email@exemplo.com">
+                                <div class="field-shell"><input type="email" name="email" value="${escapeHtml(editData?.email || '')}" placeholder="email@exemplo.com"></div>
                             </div>
                             <div class="form-group">
                                 <label class="label-tech">TELEFONE</label>
-                                <input type="text" name="telefone" value="${escapeHtml(editData?.telefone || '')}" placeholder="(00) 00000-0000">
+                                <div class="field-shell"><input type="text" name="telefone" value="${escapeHtml(editData?.telefone || '')}" placeholder="(00) 00000-0000"></div>
                             </div>
                         </div>
                     </div>
@@ -73,27 +73,27 @@ export function renderClientForm(container, onSave, onCancel, editData = null) {
                         <div class="grid-address">
                             <div class="form-group" style="grid-column: span 3;">
                                 <label class="label-tech">LOGRADOURO</label>
-                                <input type="text" name="logradouro" value="${escapeHtml(editData?.logradouro || '')}" placeholder="Rua, Avenida, etc.">
+                                <div class="field-shell"><input type="text" name="logradouro" value="${escapeHtml(editData?.logradouro || '')}" placeholder="Rua, Avenida, etc."></div>
                             </div>
                             <div class="form-group">
                                 <label class="label-tech">NÚMERO</label>
-                                <input type="text" name="numero" value="${escapeHtml(editData?.numero || '')}" placeholder="123">
+                                <div class="field-shell"><input type="text" name="numero" value="${escapeHtml(editData?.numero || '')}" placeholder="123"></div>
                             </div>
                             <div class="form-group">
                                 <label class="label-tech">BAIRRO</label>
-                                <input type="text" name="bairro" value="${escapeHtml(editData?.bairro || '')}" placeholder="Centro">
+                                <div class="field-shell"><input type="text" name="bairro" value="${escapeHtml(editData?.bairro || '')}" placeholder="Centro"></div>
                             </div>
                             <div class="form-group">
                                 <label class="label-tech">CIDADE</label>
-                                <input type="text" name="cidade" value="${escapeHtml(editData?.cidade || '')}" placeholder="São Paulo">
+                                <div class="field-shell"><input type="text" name="cidade" value="${escapeHtml(editData?.cidade || '')}" placeholder="São Paulo"></div>
                             </div>
                             <div class="form-group">
                                 <label class="label-tech">UF</label>
-                                <input type="text" name="uf" value="${escapeHtml(editData?.uf || '')}" placeholder="SP" maxlength="2">
+                                <div class="field-shell"><input type="text" name="uf" value="${escapeHtml(editData?.uf || '')}" placeholder="SP" maxlength="2"></div>
                             </div>
                             <div class="form-group">
                                 <label class="label-tech">CEP</label>
-                                <input type="text" name="cep" value="${escapeHtml(editData?.cep || '')}" placeholder="00000-000">
+                                <div class="field-shell"><input type="text" name="cep" value="${escapeHtml(editData?.cep || '')}" placeholder="00000-000"></div>
                             </div>
                         </div>
                     </div>
@@ -138,6 +138,31 @@ export function renderClientForm(container, onSave, onCancel, editData = null) {
                 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
                 .grid-address { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; }
                 .form-section { border-left: 2px solid var(--slate-200); padding-left: 2rem; }
+                .client-form-shell .form-group label { display: block; margin-bottom: 0.75rem; }
+                .client-form-shell .field-shell {
+                    background: rgba(255, 255, 255, 0.78);
+                    border-radius: 14px;
+                    padding: 0.1rem 0.95rem 0;
+                    border: none;
+                    box-shadow: inset 0 -1px 0 var(--slate-200);
+                    transition: var(--transition);
+                }
+                .client-form-shell .field-shell:focus-within {
+                    background: rgba(255, 255, 255, 0.94);
+                    box-shadow: inset 0 -2px 0 var(--primary), 0 0 0 4px rgba(16, 185, 129, 0.08);
+                }
+                .client-form-shell .field-shell input {
+                    width: 100%;
+                    padding: 0.95rem 0 0.9rem;
+                    border: none;
+                    outline: none;
+                    background: transparent;
+                    font-family: inherit;
+                    color: var(--slate-950);
+                }
+                .client-form-shell .field-shell input::placeholder {
+                    color: var(--slate-400);
+                }
                 .upload-zone { 
                     border: 2px dashed var(--slate-200); 
                     padding: 3rem; 

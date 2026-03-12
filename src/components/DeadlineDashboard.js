@@ -2,7 +2,8 @@ import { processStore } from '../utils/ProcessStore.js';
 import { clientStore } from '../utils/ClientStore.js';
 import { escapeHtml } from '../utils/sanitize.js';
 
-export function renderDeadlineDashboard(container) {
+export function renderDeadlineDashboard(container, options = {}) {
+    const canEdit = options.canEdit !== false;
     const render = (view = 'dashboard', selectedCategory = 'pending') => {
         container.innerHTML = '';
         
@@ -22,7 +23,7 @@ export function renderDeadlineDashboard(container) {
         if (view === 'dashboard') {
             renderMainDashboard(container, allDeadlines, (cat) => render('list', cat));
         } else {
-            renderDeadlineList(container, allDeadlines, selectedCategory, () => render('dashboard'), render);
+            renderDeadlineList(container, allDeadlines, selectedCategory, () => render('dashboard'), render, canEdit);
         }
     };
 
@@ -122,7 +123,7 @@ function renderMainDashboard(container, allDeadlines, onSelectCategory) {
     container.querySelector('#card-archived').onclick = () => onSelectCategory('archived');
 }
 
-function renderDeadlineList(container, allDeadlines, category, onBack, onRefresh) {
+function renderDeadlineList(container, allDeadlines, category, onBack, onRefresh, canEdit) {
     const list = allDeadlines.filter(d => d.status === category);
     
     // Sort logic
@@ -230,14 +231,14 @@ function renderDeadlineList(container, allDeadlines, category, onBack, onRefresh
                                     </td>
                                     <td style="text-align: right;">
                                         <div style="display: flex; justify-content: flex-end; gap: 0.6rem;">
-                                            ${category === 'pending' ? `
+                                            ${canEdit && category === 'pending' ? `
                                                 <button class="btn-action-status btn-pill" data-pid="${d.processId}" data-did="${d.id}" data-status="completed" style="background: var(--bg-main); color: var(--primary); font-size: 9px; padding: 8px 16px;">CONCLUIR</button>
                                             ` : ''}
-                                            ${category === 'completed' ? `
+                                            ${canEdit && category === 'completed' ? `
                                                 <button class="btn-action-status btn-pill" data-pid="${d.processId}" data-did="${d.id}" data-status="pending" style="background: var(--bg-main); color: #f59e0b; font-size: 9px; padding: 8px 16px;">REABRIR</button>
                                                 <button class="btn-action-status btn-pill" data-pid="${d.processId}" data-did="${d.id}" data-status="archived" style="background: var(--bg-main); color: var(--slate-500); font-size: 9px; padding: 8px 16px;">ARQUIVAR</button>
                                             ` : ''}
-                                            ${category === 'archived' ? `
+                                            ${canEdit && category === 'archived' ? `
                                                 <button class="btn-action-status btn-pill" data-pid="${d.processId}" data-did="${d.id}" data-status="pending" style="background: var(--bg-main); color: var(--primary); font-size: 9px; padding: 8px 16px;">RESTAURAR</button>
                                             ` : ''}
                                         </div>

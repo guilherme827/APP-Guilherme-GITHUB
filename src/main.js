@@ -1,6 +1,5 @@
 import './styles/main.css';
-import './styles/themes.css';
-import { renderHeader } from './components/Header.js';
+import { renderHeader, initHeaderMenu } from './components/Header.js';
 import { renderDock, initDock } from './components/Dock.js';
 import { processStore } from './utils/ProcessStore.js';
 import { clientStore } from './utils/ClientStore.js';
@@ -9,7 +8,6 @@ import { profileService } from './utils/ProfileService.js';
 import { renderLoginScreen } from './components/LoginScreen.js';
 import { renderClientList } from './components/ClientList.js';
 import { renderClientForm } from './components/ClientForm.js';
-import { renderClientDetails } from './components/ClientDetails.js';
 import { renderProcessList } from './components/ProcessList.js';
 import { renderProcessForm } from './components/ProcessForm.js';
 import { renderProcessDetails } from './components/ProcessDetails.js';
@@ -17,22 +15,57 @@ import { renderDeadlineDashboard } from './components/DeadlineDashboard.js';
 import { renderSettings } from './components/Settings.js';
 import { renderTeamSettings } from './components/TeamSettings.js';
 import { showNoticeModal } from './components/NoticeModal.js';
+import {
+    canDeleteContent,
+    canEditContent,
+    canViewSection,
+    hasAdminAccess
+} from './utils/accessControl.js';
 
 const THEME_STORAGE_KEY = 'app-control-theme';
-const AVAILABLE_THEMES = ['light', 'dark', 'ocean', 'sunset'];
+const AVAILABLE_THEMES = ['niobio', 'diamante', 'topazio', 'ouro', 'prata', 'esmeralda'];
+const ALERT_STORAGE_KEY = 'app-control-alert-days';
 const LOGIN_ROUTE = '/';
 const APP_ROUTE = '/app';
+const AUTH_DEBUG = true;
 
-function getStoredTheme() {
-    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
-    return AVAILABLE_THEMES.includes(savedTheme) ? savedTheme : 'light';
+function authLog(...args) {
+    if (!AUTH_DEBUG) return;
+    console.log('[auth-debug]', ...args);
 }
 
-function applyTheme(theme) {
-    const safeTheme = AVAILABLE_THEMES.includes(theme) ? theme : 'light';
+function getStoredTheme() {
+    const theme = String(localStorage.getItem(THEME_STORAGE_KEY) || 'niobio');
+    return AVAILABLE_THEMES.includes(theme) ? theme : 'niobio';
+}
+
+function applyTheme(themeId) {
+    const safeTheme = AVAILABLE_THEMES.includes(themeId) ? themeId : 'niobio';
     document.body.setAttribute('data-theme', safeTheme);
     localStorage.setItem(THEME_STORAGE_KEY, safeTheme);
     return safeTheme;
+}
+
+function getStoredAlertDays() {
+    const value = Number(localStorage.getItem(ALERT_STORAGE_KEY) || 15);
+    return Number.isFinite(value) && value > 0 ? value : 15;
+}
+
+function saveAlertDays(days) {
+    const safeDays = Number.isFinite(Number(days)) ? Number(days) : 15;
+    localStorage.setItem(ALERT_STORAGE_KEY, String(safeDays));
+    return safeDays;
+}
+
+function getProfileDisplayName(profile, fallbackEmail = '') {
+    return String(profile?.full_name || fallbackEmail || 'Usuário').trim();
+}
+
+function getHeaderGreeting(profile, fallbackEmail = '') {
+    const firstName = getProfileDisplayName(profile, fallbackEmail).split(/\s+/)[0] || 'Usuário';
+    if (profile?.gender === 'feminino') return `Olá, ${firstName}!`;
+    if (profile?.gender === 'masculino') return `Olá, ${firstName}!`;
+    return `Olá, ${firstName}!`;
 }
 
 function navigateTo(path, replace = false) {
@@ -47,39 +80,70 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentSession = null;
     let currentProfile = null;
     let teamProfiles = [];
+    let teamCreateLoading = false;
+    let currentSection = 'painel';
+    let hasRenderedProtectedApp = false;
+    let isBootstrappingSession = true;
+    let renderSequence = 0;
+    let alertLeadDays = getStoredAlertDays();
+    let disposeHeaderMenu = null;
 
     const renderRoute = async () => {
+        const renderId = ++renderSequence;
         const isAuthenticated = !!currentSession;
         const pathname = window.location.pathname;
+        authLog('renderRoute:start', {
+            renderId,
+            pathname,
+            isAuthenticated,
+            currentSection,
+            sessionUserId: currentSession?.user?.id || null
+        });
 
         if (!isAuthenticated && pathname !== LOGIN_ROUTE) {
+            authLog('redirecting to login because no session is present');
             navigateTo(LOGIN_ROUTE, true);
         }
 
         if (isAuthenticated && pathname === LOGIN_ROUTE) {
+            authLog('redirecting to /app because session exists');
             navigateTo(APP_ROUTE, true);
         }
 
         if (!currentSession) {
+            document.body.classList.remove('dashboard-active');
+            authLog('rendering login screen');
             renderLoginScreen(app, async (email, password) => {
+                authLog('signInWithPassword:start', { email });
                 await authService.signInWithPassword(email, password);
             });
             return;
         }
+        document.body.classList.add('dashboard-active');
 
         try {
             const [profile] = await Promise.all([
                 profileService.getProfile(currentSession.user.id),
-                clientStore.load(true),
-                processStore.load(true)
+                clientStore.load(!hasRenderedProtectedApp),
+                processStore.load(!hasRenderedProtectedApp)
             ]);
             currentProfile = profile;
-            if (currentProfile?.role === 'admin') {
+            if (hasAdminAccess(currentProfile)) {
                 teamProfiles = await profileService.listProfiles();
             } else {
                 teamProfiles = [];
             }
+            authLog('profile sync complete', {
+                renderId,
+                role: currentProfile?.role,
+                hasRenderedProtectedApp
+            });
         } catch (error) {
+            if (renderId !== renderSequence) {
+                authLog('renderRoute:stale-error-ignored', { renderId, activeRenderId: renderSequence });
+                return;
+            }
+            authLog('renderRoute:error', error);
             app.innerHTML = `
                 <main id="main-content" style="padding: 3rem 2rem;">
                     <div class="glass-card" style="max-width: 760px; margin: 0 auto; padding: 2rem;">
@@ -92,30 +156,92 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
+        if (renderId !== renderSequence) {
+            authLog('renderRoute:stale-render-skipped', { renderId, activeRenderId: renderSequence });
+            return;
+        }
+
         renderAuthenticatedApp(currentSession);
     };
 
     const renderAuthenticatedApp = (session) => {
+        authLog('renderAuthenticatedApp', {
+            currentSection,
+            sessionUserId: session?.user?.id || null
+        });
+        disposeHeaderMenu?.();
+        const isAdmin = hasAdminAccess(currentProfile);
+        const visibleSections = ['painel', 'clientes', 'processos', 'prazos', 'financeiro', 'configuracoes']
+            .filter((sectionId) => canViewSection(currentProfile, sectionId));
+        const displayName = getProfileDisplayName(currentProfile, session?.user?.email || '');
+        const headerGreeting = getHeaderGreeting(currentProfile, session?.user?.email || '');
+
         app.innerHTML = `
-            ${renderHeader(session?.user?.email || '')}
-            <main id="main-content">
-                <div id="view-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3rem;">
+            <div class="dashboard-shell">
+                <div class="dashboard-glow dashboard-glow-a"></div>
+                <div class="dashboard-glow dashboard-glow-b"></div>
+                ${renderHeader({
+                    email: session?.user?.email || '',
+                    fullName: displayName,
+                    greeting: headerGreeting,
+                    role: currentProfile?.role || 'user',
+                    alertDays: alertLeadDays
+                })}
+                <main id="main-content">
+                    <div id="view-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2.5rem;">
                     <div id="view-title-group" style="display: flex; align-items: center; gap: 1rem;">
-                        <div id="view-icon" style="color: var(--slate-950);"></div>
-                        <h1 id="page-title" class="font-black" style="font-size: 2rem; text-transform: uppercase;">Painel Central</h1>
+                        <div id="view-icon" class="view-icon-shell"></div>
+                        <div>
+                            <p class="label-tech">Workspace</p>
+                            <h1 id="page-title" class="font-black" style="font-size: 2rem; text-transform: uppercase; margin-top: 0.35rem;">Painel Central</h1>
+                        </div>
                     </div>
                     <div id="view-actions"></div>
-                </div>
-                <section id="content-area"></section>
-            </main>
-            ${renderDock({ isAdmin: currentProfile?.role === 'admin' })}
+                    </div>
+                    <section id="content-area"></section>
+                </main>
+                ${renderDock({ isAdmin, visibleIds: visibleSections, fullName: displayName, email: session?.user?.email || '' })}
+            </div>
         `;
 
-        document.getElementById('btn-logout')?.addEventListener('click', async () => {
-            try {
-                await authService.signOut();
-            } catch (error) {
-                showNoticeModal('Erro ao sair', error?.message || 'Não foi possível encerrar a sessão.');
+        disposeHeaderMenu = initHeaderMenu({
+            profile: currentProfile,
+            onProfileSave: async (payload) => {
+                try {
+                    currentProfile = await profileService.updateOwnProfile(payload);
+                    showNoticeModal('Dados atualizados', 'Seu perfil foi atualizado com sucesso.');
+                    renderAuthenticatedApp(currentSession);
+                } catch (error) {
+                    showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível atualizar seus dados.');
+                }
+            },
+            onAlertSave: async (days) => {
+                alertLeadDays = saveAlertDays(days);
+                showNoticeModal('Alertas atualizados', `Os avisos de vencimento agora usarão ${alertLeadDays} dias de antecedência.`);
+                renderAuthenticatedApp(currentSession);
+            },
+            onPasswordSave: async ({ password, confirmPassword }) => {
+                if (!password || password.length < 6) {
+                    showNoticeModal('Senha inválida', 'A nova senha precisa ter pelo menos 6 caracteres.');
+                    return;
+                }
+                if (password !== confirmPassword) {
+                    showNoticeModal('Confirmação inválida', 'A confirmação da senha não confere.');
+                    return;
+                }
+                try {
+                    await authService.updatePassword(password);
+                    showNoticeModal('Senha atualizada', 'Sua nova senha foi salva com sucesso.');
+                } catch (error) {
+                    showNoticeModal('Erro de segurança', error?.message || 'Não foi possível atualizar a senha.');
+                }
+            },
+            onSignOut: async () => {
+                try {
+                    await authService.signOut();
+                } catch (error) {
+                    showNoticeModal('Erro ao sair', error?.message || 'Não foi possível encerrar a sessão.');
+                }
             }
         });
 
@@ -125,8 +251,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         const viewActions = document.getElementById('view-actions');
 
         const navigate = (id) => {
+            authLog('navigate:requested', { id, currentSection });
             contentArea.innerHTML = '';
             viewActions.innerHTML = '';
+            viewActions.style.display = '';
+
+            if (id !== 'equipe' && !canViewSection(currentProfile, id)) {
+                authLog('navigate:blocked by permission', { id, role: currentProfile?.role });
+                showNoticeModal('Acesso restrito', 'Seu perfil não possui acesso a esta área.');
+                navigate('painel');
+                return;
+            }
+
+            currentSection = id;
+            document.querySelectorAll('.dock-item').forEach((item) => {
+                item.classList.toggle('active', item.dataset.id === id);
+            });
 
             const sectionMap = {
                 painel: { title: 'Painel Central', icon: getSectionIcon('painel') },
@@ -149,13 +289,60 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (id === 'processos') {
                 renderProcessosView(contentArea, viewActions);
             } else if (id === 'prazos') {
-                renderDeadlineDashboard(contentArea);
+                renderDeadlineDashboard(contentArea, {
+                    canEdit: canEditContent(currentProfile)
+                });
             } else if (id === 'configuracoes') {
-                renderSettings(contentArea, currentTheme, (selectedTheme) => {
-                    currentTheme = applyTheme(selectedTheme);
+                renderSettings(contentArea, {
+                    profile: currentProfile,
+                    email: session?.user?.email || '',
+                    alertDays: alertLeadDays,
+                    currentTheme,
+                    isAdmin,
+                    onThemeChange: (themeId) => {
+                        currentTheme = applyTheme(themeId);
+                    },
+                    onProfileSave: async (payload) => {
+                        try {
+                            currentProfile = await profileService.updateOwnProfile(payload);
+                            showNoticeModal('Dados atualizados', 'Seu perfil foi atualizado com sucesso.');
+                            renderAuthenticatedApp(currentSession);
+                        } catch (error) {
+                            showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível atualizar seus dados.');
+                        }
+                    },
+                    onAlertSave: async (days) => {
+                        alertLeadDays = saveAlertDays(days);
+                        showNoticeModal('Alertas atualizados', `Os avisos de vencimento agora usarão ${alertLeadDays} dias de antecedência.`);
+                        renderAuthenticatedApp(currentSession);
+                    },
+                    onPasswordSave: async ({ password, confirmPassword }) => {
+                        if (!password || password.length < 6) {
+                            showNoticeModal('Senha inválida', 'A nova senha precisa ter pelo menos 6 caracteres.');
+                            return;
+                        }
+                        if (password !== confirmPassword) {
+                            showNoticeModal('Confirmação inválida', 'A confirmação da senha não confere.');
+                            return;
+                        }
+                        try {
+                            await authService.updatePassword(password);
+                            showNoticeModal('Senha atualizada', 'Sua nova senha foi salva com sucesso.');
+                        } catch (error) {
+                            showNoticeModal('Erro de segurança', error?.message || 'Não foi possível atualizar a senha.');
+                        }
+                    },
+                    onSignOut: async () => {
+                        try {
+                            await authService.signOut();
+                        } catch (error) {
+                            showNoticeModal('Erro ao sair', error?.message || 'Não foi possível encerrar a sessão.');
+                        }
+                    },
+                    onOpenTeam: () => navigate('equipe')
                 });
             } else if (id === 'equipe') {
-                if (currentProfile?.role !== 'admin') {
+                if (!isAdmin) {
                     navigate('painel');
                     return;
                 }
@@ -163,6 +350,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     currentProfile,
                     profiles: teamProfiles,
                     loading: false,
+                    createLoading: teamCreateLoading,
                     onRefresh: async () => {
                         try {
                             teamProfiles = await profileService.listProfiles();
@@ -171,17 +359,30 @@ document.addEventListener('DOMContentLoaded', async () => {
                             showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível atualizar a lista da equipe.');
                         }
                     },
-                    onRoleChange: async (profileId, nextRole) => {
+                    onCreateMember: async (payload) => {
                         try {
-                            await profileService.updateRole(profileId, nextRole);
+                            teamCreateLoading = true;
+                            await profileService.createMember(payload);
                             teamProfiles = await profileService.listProfiles();
-                            if (String(profileId) === String(currentProfile?.id)) {
-                                currentProfile = teamProfiles.find((profile) => String(profile.id) === String(profileId)) || currentProfile;
-                            }
-                            showNoticeModal('Permissão atualizada', 'A role do usuário foi atualizada com sucesso.');
+                            showNoticeModal('Novo membro criado', 'O novo usuário foi criado com sucesso e já possui acesso inicial.');
                             navigate('equipe');
                         } catch (error) {
-                            showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível atualizar a role do usuário.');
+                            showNoticeModal('Erro ao criar', error?.message || 'Não foi possível criar o novo membro.');
+                        } finally {
+                            teamCreateLoading = false;
+                        }
+                    },
+                    onUpdateMember: async (payload) => {
+                        try {
+                            await profileService.updateMember(payload);
+                            teamProfiles = await profileService.listProfiles();
+                            if (String(payload.id) === String(currentProfile?.id)) {
+                                currentProfile = teamProfiles.find((profile) => String(profile.id) === String(payload.id)) || currentProfile;
+                            }
+                            showNoticeModal('Permissões atualizadas', 'As permissões do usuário foram atualizadas com sucesso.');
+                            navigate('equipe');
+                        } catch (error) {
+                            showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível atualizar o membro da equipe.');
                         }
                     }
                 });
@@ -207,7 +408,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                         }
                     },
                     restoreClientId,
-                    restoreProjectId
+                    restoreProjectId,
+                    {
+                        canEdit: canEditContent(currentProfile),
+                        canDelete: canDeleteContent(currentProfile)
+                    }
                 );
             };
             renderList();
@@ -269,16 +474,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 renderClientList(container, actionsContainer,
                     (client) => showEditClient(container, actionsContainer, client, renderList),
                     () => showAddClient(container, actionsContainer, renderList),
-                    (client) => showClientDetails(container, actionsContainer, client, renderList)
+                    {
+                        canEdit: canEditContent(currentProfile),
+                        canDelete: canDeleteContent(currentProfile)
+                    }
                 );
             };
             renderList();
-        }
-
-        function showClientDetails(container, actionsContainer, client, onBack) {
-            container.innerHTML = '';
-            actionsContainer.innerHTML = '';
-            renderClientDetails(container, client, onBack);
         }
 
         function showAddClient(container, actionsContainer, onComplete) {
@@ -315,21 +517,60 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         initDock(navigate);
-        navigate('painel');
+        const defaultSection = ['painel', 'clientes', 'processos', 'prazos', 'configuracoes']
+            .find((sectionId) => canViewSection(currentProfile, sectionId)) || 'painel';
+        const targetSection = canViewSection(currentProfile, currentSection) ? currentSection : defaultSection;
+        authLog('renderAuthenticatedApp:initial-section', { currentSection, defaultSection, targetSection });
+        navigate(targetSection);
+        hasRenderedProtectedApp = true;
     };
 
-    const { data: authSubscription } = authService.onAuthStateChange(async (_event, session) => {
+    const handleAuthStateChange = async (event, session) => {
+        authLog('onAuthStateChange', {
+            event,
+            currentUserId: currentSession?.user?.id || null,
+            nextUserId: session?.user?.id || null,
+            isBootstrappingSession
+        });
+
+        if (isBootstrappingSession && event === 'INITIAL_SESSION') {
+            authLog('ignoring INITIAL_SESSION during bootstrap');
+            return;
+        }
+
+        if (event === 'SIGNED_IN' && currentSession?.user?.id === session?.user?.id && hasRenderedProtectedApp) {
+            currentSession = session;
+            authLog('ignoring redundant SIGNED_IN for same user');
+            return;
+        }
+
+        if (event === 'TOKEN_REFRESHED' && currentSession?.user?.id === session?.user?.id && hasRenderedProtectedApp) {
+            currentSession = session;
+            authLog('ignoring TOKEN_REFRESHED rerender for same user');
+            return;
+        }
+
         currentSession = session;
         if (!session) {
             currentProfile = null;
             teamProfiles = [];
             clientStore.reset();
             processStore.reset();
+            hasRenderedProtectedApp = false;
+            currentSection = 'painel';
             navigateTo(LOGIN_ROUTE, true);
         } else {
             navigateTo(APP_ROUTE, true);
         }
         await renderRoute();
+    };
+
+    const { data: authSubscription } = authService.onAuthStateChange((event, session) => {
+        window.setTimeout(() => {
+            handleAuthStateChange(event, session).catch((error) => {
+                authLog('handleAuthStateChange:error', error);
+            });
+        }, 0);
     });
 
     window.addEventListener('popstate', () => {
@@ -340,6 +581,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     try {
         currentSession = await authService.getSession();
+        authLog('bootstrap:getSession', {
+            sessionUserId: currentSession?.user?.id || null,
+            pathname: window.location.pathname
+        });
         if (currentSession && window.location.pathname === LOGIN_ROUTE) {
             navigateTo(APP_ROUTE, true);
         }
@@ -348,6 +593,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         await renderRoute();
     } catch (error) {
+        authLog('bootstrap:error', error);
         app.innerHTML = `
             <main id="main-content" style="padding: 3rem 2rem;">
                 <div class="glass-card" style="max-width: 760px; margin: 0 auto; padding: 2rem;">
@@ -357,6 +603,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </div>
             </main>
         `;
+    } finally {
+        isBootstrappingSession = false;
+        authLog('bootstrap:done');
     }
 
     window.addEventListener('beforeunload', () => {

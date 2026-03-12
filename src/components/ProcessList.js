@@ -4,21 +4,25 @@ import { showConfirmModal } from './ConfirmModal.js';
 import { showNoticeModal } from './NoticeModal.js';
 import { escapeHtml } from '../utils/sanitize.js';
 
-export function renderProcessList(container, actionsContainer, onAddProcess, onViewProcess, initialClientId = null, initialProjectId = null) {
+export function renderProcessList(container, actionsContainer, onAddProcess, onViewProcess, initialClientId = null, initialProjectId = null, options = {}) {
     // Current Navigation State
     let currentClientId = initialClientId;
     let currentProjectId = initialProjectId;
+    const canEdit = options.canEdit !== false;
+    const canDelete = options.canDelete === true;
 
     const render = () => {
         container.innerHTML = '';
         actionsContainer.innerHTML = '';
 
         // Action Button
-        const btnAdd = document.createElement('button');
-        btnAdd.className = 'btn-pill btn-black';
-        btnAdd.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 0.5rem;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> ADICIONAR PROCESSO`;
-        btnAdd.onclick = () => onAddProcess(currentClientId);
-        actionsContainer.appendChild(btnAdd);
+        if (canEdit) {
+            const btnAdd = document.createElement('button');
+            btnAdd.className = 'btn-pill btn-black';
+            btnAdd.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 0.5rem;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> ADICIONAR PROCESSO`;
+            btnAdd.onclick = () => onAddProcess(currentClientId);
+            actionsContainer.appendChild(btnAdd);
+        }
 
         // Hierarchical Breadcrumbs
         const breadcrumbs = document.createElement('div');
@@ -389,23 +393,23 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                             </td>
                             <td>
                                 <div class="proc-menu-wrap" style="position: relative;">
-                                    <button class="proc-menu-btn" data-id="${p.id}" style="background: none; border: none; cursor: pointer; padding: 6px; border-radius: 8px; color: var(--slate-400); display: flex; align-items: center;">
+                                    ${(canEdit || canDelete) ? `<button class="proc-menu-btn" data-id="${p.id}" style="background: none; border: none; cursor: pointer; padding: 6px; border-radius: 8px; color: var(--slate-400); display: flex; align-items: center;">
                                         <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
-                                    </button>
-                                    <div class="proc-menu-dropdown hidden" data-id="${p.id}" style="position: absolute; right: 0; top: 100%; background: white; border: 1px solid var(--slate-200); border-radius: 12px; box-shadow: var(--shadow-deep); z-index: 1000; min-width: 140px; padding: 6px; overflow: hidden;">
-                                        <div class="proc-action" data-action="edit" data-id="${p.id}" style="padding: 8px 12px; cursor: pointer; border-radius: 8px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;">
+                                    </button>` : ''}
+                                    ${(canEdit || canDelete) ? `<div class="proc-menu-dropdown hidden" data-id="${p.id}" style="position: absolute; right: 0; top: 100%; background: white; border: 1px solid var(--slate-200); border-radius: 12px; box-shadow: var(--shadow-deep); z-index: 1000; min-width: 140px; padding: 6px; overflow: hidden;">
+                                        ${canEdit ? `<div class="proc-action" data-action="edit" data-id="${p.id}" style="padding: 8px 12px; cursor: pointer; border-radius: 8px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;">
                                             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                             EDITAR
-                                        </div>
-                                        <div class="proc-action" data-action="archive" data-id="${p.id}" style="padding: 8px 12px; cursor: pointer; border-radius: 8px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;">
+                                        </div>` : ''}
+                                        ${canEdit ? `<div class="proc-action" data-action="archive" data-id="${p.id}" style="padding: 8px 12px; cursor: pointer; border-radius: 8px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;">
                                             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
                                             ARQUIVAR
-                                        </div>
-                                        <div class="proc-action" data-action="delete" data-id="${p.id}" style="padding: 8px 12px; cursor: pointer; border-radius: 8px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--rose-500);">
+                                        </div>` : ''}
+                                        ${canDelete ? `<div class="proc-action" data-action="delete" data-id="${p.id}" style="padding: 8px 12px; cursor: pointer; border-radius: 8px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--rose-500);">
                                             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                                             EXCLUIR
-                                        </div>
-                                    </div>
+                                        </div>` : ''}
+                                    </div>` : ''}
                                 </div>
                             </td>
                         </tr>

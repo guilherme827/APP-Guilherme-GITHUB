@@ -1,7 +1,44 @@
 import { supabase } from '../lib/supabaseClient.js';
+import { authService } from './AuthService.js';
 
 function getSupabaseMessage(error, fallback) {
     return error?.message || fallback;
+}
+
+async function fetchTeamApi(path = '', options = {}) {
+    const accessToken = await authService.getAccessToken();
+    const response = await fetch(`/api/team-members${path}`, {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+            ...(options.headers || {})
+        }
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload?.error || 'Falha na API de equipe.');
+    }
+    return payload?.data;
+}
+
+async function fetchAccountApi(options = {}) {
+    const accessToken = await authService.getAccessToken();
+    const response = await fetch('/api/account', {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+            ...(options.headers || {})
+        }
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload?.error || 'Falha na API da conta.');
+    }
+    return payload?.data;
 }
 
 export const profileService = {
@@ -20,30 +57,27 @@ export const profileService = {
     },
 
     async listProfiles() {
-        const { data, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .order('email', { ascending: true });
-
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Não foi possível listar os usuários da equipe.'));
-        }
-
-        return data || [];
+        return fetchTeamApi('', { method: 'GET' });
     },
 
-    async updateRole(userId, role) {
-        const { data, error } = await supabase
-            .from('profiles')
-            .update({ role })
-            .eq('id', userId)
-            .select()
-            .single();
+    async createMember(payload) {
+        return fetchTeamApi('', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
 
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Não foi possível atualizar a permissão do usuário.'));
-        }
+    async updateMember(payload) {
+        return fetchTeamApi('', {
+            method: 'PATCH',
+            body: JSON.stringify(payload)
+        });
+    },
 
-        return data;
+    async updateOwnProfile(payload) {
+        return fetchAccountApi({
+            method: 'PATCH',
+            body: JSON.stringify(payload)
+        });
     }
 };

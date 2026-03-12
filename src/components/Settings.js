@@ -1,71 +1,195 @@
-const THEME_OPTIONS = [
-    {
-        id: 'light',
-        title: 'Claro',
-        description: 'Visual limpo com foco em contraste suave.'
-    },
-    {
-        id: 'dark',
-        title: 'Escuro',
-        description: 'Interface noturna para reduzir brilho e fadiga.'
-    },
-    {
-        id: 'ocean',
-        title: 'Oceano',
-        description: 'Tons azul-petróleo com destaque frio e profissional.'
-    },
-    {
-        id: 'sunset',
-        title: 'Sunset',
-        description: 'Paleta quente com laranja e coral para alto destaque.'
-    }
-];
+import { escapeHtml } from '../utils/sanitize.js';
 
-export function renderSettings(container, currentTheme, onThemeChange) {
-    const persistenceLabel = 'Supabase Ativo';
-    const persistenceDescription = 'Os dados de titulares e processos estao sendo carregados diretamente do banco Supabase configurado neste ambiente.';
+export function renderSettings(container, options = {}) {
+    const {
+        profile = null,
+        email = '',
+        alertDays = 15,
+        currentTheme = 'niobio',
+        isAdmin = false,
+        onThemeChange,
+        onProfileSave,
+        onAlertSave,
+        onPasswordSave,
+        onSignOut,
+        onOpenTeam
+    } = options;
+
+    const safeName = escapeHtml(profile?.full_name || email || 'Usuario');
+    const safeEmail = escapeHtml(email || profile?.email || 'usuario@sistema.com');
 
     container.innerHTML = `
-        <div class="glass-card animate-fade-in" style="max-width: 900px; margin: 0 auto;">
-            <div style="margin-bottom: 1.5rem;">
-                <p class="label-tech">PERSONALIZACAO</p>
-                <h2 class="font-black" style="font-size: 1.5rem; margin-top: 0.25rem;">Tema da Interface</h2>
-                <p style="color: var(--slate-500); margin-top: 0.5rem;">Selecione o visual que melhor combina com seu fluxo de trabalho.</p>
-            </div>
+        <div class="settings-shell animate-fade-in">
+            <section class="glass-card">
+                <p class="label-tech">Conta</p>
+                <h2 class="font-black settings-title">Perfil e seguranca</h2>
+                <p class="settings-copy">Gerencie seus dados, regras de alerta e acessos do ambiente GEOCONSULT.</p>
 
-            <div style="margin-bottom: 1.5rem; padding: 1rem 1.25rem; border-radius: 20px; background: var(--bg-main); border: 1px solid var(--slate-200);">
-                <p class="label-tech">ARMAZENAMENTO</p>
-                <p class="font-black" style="font-size: 1rem; margin-top: 0.35rem;">${persistenceLabel}</p>
-                <p style="color: var(--slate-500); margin-top: 0.35rem; line-height: 1.6;">${persistenceDescription}</p>
-            </div>
+                <div class="settings-theme-block">
+                    <p class="label-tech">Tema do sistema</p>
+                    <div class="settings-theme-options">
+                        ${renderThemeOption('niobio', 'Niobio', currentTheme)}
+                        ${renderThemeOption('diamante', 'Diamante', currentTheme)}
+                        ${renderThemeOption('topazio', 'Topazio', currentTheme)}
+                        ${renderThemeOption('ouro', 'Ouro', currentTheme)}
+                        ${renderThemeOption('prata', 'Prata', currentTheme)}
+                        ${renderThemeOption('esmeralda', 'Esmeralda', currentTheme)}
+                    </div>
+                </div>
 
-            <div class="theme-grid">
-                ${THEME_OPTIONS.map((theme) => `
-                    <button
-                        type="button"
-                        class="theme-option ${theme.id === currentTheme ? 'is-active' : ''}"
-                        data-theme-id="${theme.id}"
-                    >
-                        <div class="theme-preview theme-preview-${theme.id}"></div>
-                        <div style="text-align: left;">
-                            <p class="font-black" style="font-size: 1rem;">${theme.title}</p>
-                            <p class="label-tech" style="margin-top: 0.25rem; line-height: 1.4; text-transform: none; letter-spacing: 0.03em;">${theme.description}</p>
+                <div class="settings-grid">
+                    <form id="settings-profile-form" class="settings-form-block">
+                        <div>
+                            <p class="label-tech">Perfil conectado</p>
+                            <p class="settings-emphasis">${safeName}</p>
+                            <p class="settings-copy-inline">${safeEmail}</p>
                         </div>
-                    </button>
-                `).join('')}
-            </div>
+                        <label class="settings-field">
+                            <span class="label-tech">Nome completo</span>
+                            <input type="text" name="full_name" value="${safeName}" required />
+                        </label>
+                        <label class="settings-field">
+                            <span class="label-tech">Tratamento</span>
+                            <select name="gender">
+                                <option value="neutro" ${profile?.gender === 'neutro' ? 'selected' : ''}>Colaborador(a)</option>
+                                <option value="masculino" ${profile?.gender === 'masculino' ? 'selected' : ''}>Colaborador</option>
+                                <option value="feminino" ${profile?.gender === 'feminino' ? 'selected' : ''}>Colaboradora</option>
+                            </select>
+                        </label>
+                        <button type="submit" class="btn-pill btn-black">Salvar perfil</button>
+                    </form>
+
+                    <div class="settings-stack">
+                        <div class="settings-form-block">
+                            <p class="label-tech">Alertas</p>
+                            <p class="settings-emphasis">Antecedencia padrao</p>
+                            <p class="settings-copy-inline">Defina em quantos dias o sistema deve realcar vencimentos.</p>
+                            <div class="settings-inline-row">
+                                <label class="settings-field">
+                                    <span class="label-tech">Regra atual</span>
+                                    <select id="settings-alert-days">
+                                        ${[7, 15, 30, 45, 60].map((days) => `<option value="${days}" ${Number(alertDays) === days ? 'selected' : ''}>${days} dias</option>`).join('')}
+                                    </select>
+                                </label>
+                                <button type="button" id="settings-alert-save" class="btn-pill btn-black">Salvar regra</button>
+                            </div>
+                        </div>
+
+                        <form id="settings-password-form" class="settings-form-block">
+                            <p class="label-tech">Seguranca</p>
+                            <p class="settings-emphasis">Alterar senha</p>
+                            <div class="settings-inline-row settings-inline-row-stack">
+                                <label class="settings-field">
+                                    <span class="label-tech">Nova senha</span>
+                                    <input type="password" name="password" minlength="6" required />
+                                </label>
+                                <label class="settings-field">
+                                    <span class="label-tech">Confirmar senha</span>
+                                    <input type="password" name="confirm_password" minlength="6" required />
+                                </label>
+                            </div>
+                            <button type="submit" class="btn-pill btn-black">Atualizar senha</button>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <section class="glass-card">
+                <p class="label-tech">Ambiente</p>
+                <h3 class="font-black settings-title settings-title-sm">Infraestrutura protegida</h3>
+                <div class="settings-status-grid">
+                    <div class="settings-status-card">
+                        <span class="settings-status-icon settings-status-icon-cyan">${shieldIcon()}</span>
+                        <div>
+                            <p class="settings-emphasis">Supabase Auth ativo</p>
+                            <p class="settings-copy-inline">Sessao autenticada e armazenamento remoto sincronizado.</p>
+                        </div>
+                    </div>
+                    <div class="settings-status-card">
+                        <span class="settings-status-icon settings-status-icon-emerald">${databaseIcon()}</span>
+                        <div>
+                            <p class="settings-emphasis">Banco conectado</p>
+                            <p class="settings-copy-inline">Titulares, processos e prazos usam o banco configurado neste ambiente.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-actions-row">
+                    ${isAdmin ? '<button type="button" id="settings-open-team" class="btn-pill">Gerenciar equipe</button>' : ''}
+                    <button type="button" id="settings-signout" class="btn-pill settings-signout">Sair do sistema</button>
+                </div>
+            </section>
         </div>
     `;
 
-    container.querySelectorAll('[data-theme-id]').forEach((button) => {
-        button.addEventListener('click', () => {
-            const selectedTheme = button.dataset.themeId;
-            if (!selectedTheme || selectedTheme === currentTheme) {
-                return;
-            }
-
-            onThemeChange(selectedTheme);
-            renderSettings(container, selectedTheme, onThemeChange);
+    container.querySelector('#settings-profile-form')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (typeof onProfileSave !== 'function') return;
+        const formData = new FormData(event.currentTarget);
+        await onProfileSave({
+            full_name: String(formData.get('full_name') || '').trim(),
+            gender: String(formData.get('gender') || 'neutro')
         });
     });
+
+    container.querySelectorAll('[data-theme-id]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const selectedTheme = String(button.dataset.themeId || '');
+            if (!selectedTheme || selectedTheme === currentTheme || typeof onThemeChange !== 'function') return;
+            onThemeChange(selectedTheme);
+            renderSettings(container, {
+                ...options,
+                currentTheme: selectedTheme
+            });
+        });
+    });
+
+    container.querySelector('#settings-alert-save')?.addEventListener('click', async () => {
+        if (typeof onAlertSave !== 'function') return;
+        const value = Number(container.querySelector('#settings-alert-days')?.value || alertDays);
+        await onAlertSave(value);
+    });
+
+    container.querySelector('#settings-password-form')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (typeof onPasswordSave !== 'function') return;
+        const formData = new FormData(event.currentTarget);
+        await onPasswordSave({
+            password: String(formData.get('password') || ''),
+            confirmPassword: String(formData.get('confirm_password') || '')
+        });
+        event.currentTarget.reset();
+    });
+
+    container.querySelector('#settings-signout')?.addEventListener('click', async () => {
+        if (typeof onSignOut === 'function') {
+            await onSignOut();
+        }
+    });
+
+    container.querySelector('#settings-open-team')?.addEventListener('click', () => {
+        if (typeof onOpenTeam === 'function') {
+            onOpenTeam();
+        }
+    });
+}
+
+function shieldIcon() {
+    return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V6l8-4 8 4z"></path><path d="m9 12 2 2 4-4"></path></svg>`;
+}
+
+function databaseIcon() {
+    return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></svg>`;
+}
+
+function renderThemeOption(id, label, currentTheme) {
+    return `
+        <button
+            type="button"
+            class="settings-theme-option ${id === currentTheme ? 'is-active' : ''}"
+            data-theme-id="${id}"
+        >
+            ${label}
+        </button>
+    `;
 }
