@@ -68,6 +68,18 @@ function getHeaderGreeting(profile, fallbackEmail = '') {
     return `Olá, ${firstName}!`;
 }
 
+function buildEmergencyProfile(session) {
+    return {
+        id: session?.user?.id || '',
+        email: session?.user?.email || '',
+        full_name: '',
+        role: 'user',
+        gender: 'neutro',
+        permissions: { view: true, edit: false, delete: false },
+        folder_access: ['painel', 'clientes', 'processos', 'prazos', 'configuracoes']
+    };
+}
+
 function navigateTo(path, replace = false) {
     if (window.location.pathname === path) return;
     const method = replace ? 'replaceState' : 'pushState';
@@ -122,39 +134,43 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.body.classList.add('dashboard-active');
 
         try {
-            const [profile] = await Promise.all([
-                profileService.getProfile(currentSession.user.id),
-                clientStore.load(!hasRenderedProtectedApp),
-                processStore.load(!hasRenderedProtectedApp)
-            ]);
-            currentProfile = profile;
-            if (hasAdminAccess(currentProfile)) {
+            currentProfile = await profileService.getProfile(currentSession.user.id);
+        } catch (error) {
+            authLog('renderRoute:profile-fallback', error?.message || error);
+            currentProfile = buildEmergencyProfile(currentSession);
+        }
+
+        const [clientLoadResult, processLoadResult] = await Promise.allSettled([
+            clientStore.load(!hasRenderedProtectedApp),
+            processStore.load(!hasRenderedProtectedApp)
+        ]);
+
+        if (clientLoadResult.status === 'rejected') {
+            authLog('renderRoute:client-load-failed', clientLoadResult.reason?.message || clientLoadResult.reason);
+            clientStore.reset();
+        }
+
+        if (processLoadResult.status === 'rejected') {
+            authLog('renderRoute:process-load-failed', processLoadResult.reason?.message || processLoadResult.reason);
+            processStore.reset();
+        }
+
+        if (hasAdminAccess(currentProfile)) {
+            try {
                 teamProfiles = await profileService.listProfiles();
-            } else {
+            } catch (error) {
+                authLog('renderRoute:team-load-failed', error?.message || error);
                 teamProfiles = [];
             }
-            authLog('profile sync complete', {
-                renderId,
-                role: currentProfile?.role,
-                hasRenderedProtectedApp
-            });
-        } catch (error) {
-            if (renderId !== renderSequence) {
-                authLog('renderRoute:stale-error-ignored', { renderId, activeRenderId: renderSequence });
-                return;
-            }
-            authLog('renderRoute:error', error);
-            app.innerHTML = `
-                <main id="main-content" style="padding: 3rem 2rem;">
-                    <div class="glass-card" style="max-width: 760px; margin: 0 auto; padding: 2rem;">
-                        <p class="label-tech" style="color: var(--rose-500);">ERRO DE INTEGRAÇÃO</p>
-                        <h1 class="font-black" style="font-size: 2rem; margin-top: 0.5rem;">Não foi possível carregar o painel protegido.</h1>
-                        <p style="color: var(--slate-500); margin-top: 1rem; line-height: 1.6;">${error?.message || 'Verifique a autenticação e a estrutura do banco no Supabase.'}</p>
-                    </div>
-                </main>
-            `;
-            return;
+        } else {
+            teamProfiles = [];
         }
+
+        authLog('profile sync complete', {
+            renderId,
+            role: currentProfile?.role,
+            hasRenderedProtectedApp
+        });
 
         if (renderId !== renderSequence) {
             authLog('renderRoute:stale-render-skipped', { renderId, activeRenderId: renderSequence });
