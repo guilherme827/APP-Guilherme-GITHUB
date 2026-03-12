@@ -5,6 +5,22 @@ function getSupabaseMessage(error, fallback) {
     return error?.message || fallback;
 }
 
+function getFallbackProfile(userId, email = '') {
+    return {
+        id: userId,
+        email: String(email || '').trim(),
+        full_name: '',
+        role: 'user',
+        gender: 'neutro',
+        permissions: {
+            view: true,
+            edit: false,
+            delete: false
+        },
+        folder_access: ['painel', 'clientes', 'processos', 'prazos', 'configuracoes']
+    };
+}
+
 async function fetchTeamApi(path = '', options = {}) {
     const accessToken = await authService.getAccessToken();
     const response = await fetch(`/api/team-members${path}`, {
@@ -50,6 +66,16 @@ export const profileService = {
             .single();
 
         if (error) {
+            const message = getSupabaseMessage(error, '');
+            const shouldFallback = error?.code === 'PGRST116'
+                || /relation .*profiles/i.test(message)
+                || /does not exist/i.test(message);
+
+            if (shouldFallback) {
+                const session = await authService.getSession().catch(() => null);
+                return getFallbackProfile(userId, session?.user?.email || '');
+            }
+
             throw new Error(getSupabaseMessage(error, 'Não foi possível carregar o perfil do usuário.'));
         }
 
