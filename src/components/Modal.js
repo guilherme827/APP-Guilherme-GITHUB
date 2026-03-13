@@ -51,7 +51,7 @@ export function initModal() {
 
             .modal-content {
                 width: 500px;
-                border: 1px solid white;
+                border: 1px solid var(--slate-200);
             }
 
             .form-group {
@@ -67,9 +67,9 @@ export function initModal() {
                 width: 100%;
                 padding: 1rem 1.25rem;
                 border-radius: 16px;
-                border: 1px solid var(--slate-200);
-                background: #F8FAFC;
-                color: var(--slate-950);
+                border: 1px solid var(--input-border);
+                background: var(--input-bg);
+                color: var(--slate-900);
                 font-family: inherit;
                 font-size: 0.95rem;
                 transition: var(--transition);
@@ -77,9 +77,8 @@ export function initModal() {
             }
 
             .form-group input:focus {
-                border-color: var(--primary);
-                background: white;
-                box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1);
+                border-color: color-mix(in srgb, var(--primary) 58%, transparent);
+                box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
             }
 
             .select-wrapper select {

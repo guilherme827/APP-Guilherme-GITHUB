@@ -32,7 +32,6 @@ export function renderSettings(container, options = {}) {
                         ${renderThemeOption('diamante', 'Diamante', currentTheme)}
                         ${renderThemeOption('topazio', 'Topazio', currentTheme)}
                         ${renderThemeOption('ouro', 'Ouro', currentTheme)}
-                        ${renderThemeOption('prata', 'Prata', currentTheme)}
                         ${renderThemeOption('esmeralda', 'Esmeralda', currentTheme)}
                     </div>
                 </div>
@@ -109,7 +108,7 @@ export function renderSettings(container, options = {}) {
                         <span class="settings-status-icon settings-status-icon-emerald">${databaseIcon()}</span>
                         <div>
                             <p class="settings-emphasis">Banco conectado</p>
-                            <p class="settings-copy-inline">Titulares, processos e prazos usam o banco configurado neste ambiente.</p>
+                            <p class="settings-copy-inline">Titulares, processos e prazos sao compartilhados. Painel Central e Financeiro sao sempre individuais por usuario, mesmo quando o acesso for liberado ou bloqueado pelo administrador.</p>
                         </div>
                     </div>
                 </div>

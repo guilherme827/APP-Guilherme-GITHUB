@@ -140,16 +140,16 @@ export function renderClientForm(container, onSave, onCancel, editData = null) {
                 .form-section { border-left: 2px solid var(--slate-200); padding-left: 2rem; }
                 .client-form-shell .form-group label { display: block; margin-bottom: 0.75rem; }
                 .client-form-shell .field-shell {
-                    background: rgba(255, 255, 255, 0.78);
+                    background: var(--input-bg);
                     border-radius: 14px;
                     padding: 0.1rem 0.95rem 0;
-                    border: none;
-                    box-shadow: inset 0 -1px 0 var(--slate-200);
+                    border: 1px solid var(--input-border);
+                    box-shadow: none;
                     transition: var(--transition);
                 }
                 .client-form-shell .field-shell:focus-within {
-                    background: rgba(255, 255, 255, 0.94);
-                    box-shadow: inset 0 -2px 0 var(--primary), 0 0 0 4px rgba(16, 185, 129, 0.08);
+                    border-color: color-mix(in srgb, var(--primary) 58%, transparent);
+                    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
                 }
                 .client-form-shell .field-shell input {
                     width: 100%;
@@ -158,7 +158,7 @@ export function renderClientForm(container, onSave, onCancel, editData = null) {
                     outline: none;
                     background: transparent;
                     font-family: inherit;
-                    color: var(--slate-950);
+                    color: var(--slate-900);
                 }
                 .client-form-shell .field-shell input::placeholder {
                     color: var(--slate-400);

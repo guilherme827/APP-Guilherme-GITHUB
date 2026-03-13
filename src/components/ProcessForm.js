@@ -417,7 +417,7 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
                             ${formData.events.length === 0
                                 ? `<p class="label-tech" style="padding:1.25rem; text-align:center; color:var(--slate-400); border:1px dashed var(--slate-200); border-radius:12px;">SEM ITENS NO EXTRATO</p>`
                                 : formData.events.map((event, index) => `
-                                    <div class="extract-event-row" style="display:grid; grid-template-columns:180px 1fr minmax(260px, 360px) 32px; gap:0.9rem; align-items:start; padding:0.85rem; border:1px solid var(--slate-100); border-radius:12px; background:white;">
+                                    <div class="extract-event-row" style="display:grid; grid-template-columns:180px 1fr minmax(260px, 360px) 32px; gap:0.9rem; align-items:start; padding:0.85rem; border:1px solid var(--slate-100); border-radius:12px; background:var(--input-bg);">
                                         <div>
                                             <p class="label-tech" style="margin-bottom:0.25rem;">DATA</p>
                                             <input type="date" class="extract-event-input-date" data-index="${index}" value="${escapeHtml(event.date || '')}" style="padding:0.65rem; font-size:0.82rem;">
@@ -469,12 +469,12 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
                 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
                 .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; }
                 input, select { 
-                    width: 100%; padding: 1rem; border: 1px solid var(--slate-200); 
-                    border-radius: 12px; background: white; font-family: inherit;
+                    width: 100%; padding: 1rem; border: 1px solid var(--input-border); 
+                    border-radius: 12px; background: var(--input-bg); font-family: inherit; color: var(--slate-900);
                     transition: var(--transition);
                 }
-                input:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1); }
-                label { display: block; margin-bottom: 0.75rem; color: var(--slate-500); font-size: 10px; font-weight: 700; }
+                input:focus { border-color: color-mix(in srgb, var(--primary) 58%, transparent); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+                label { display: block; margin-bottom: 0.75rem; color: var(--slate-500); font-size: 11px; letter-spacing: 0.05em; font-weight: 600; text-transform: uppercase; }
                 
                 .phase-toggle {
                     display: flex; background: var(--slate-200); padding: 4px; border-radius: 12px; gap: 4px;
@@ -485,10 +485,10 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
                     display: block; text-align: center; padding: 0.75rem; border-radius: 9px;
                     font-size: 10px; font-weight: 800; color: var(--slate-500); transition: var(--transition);
                 }
-                .toggle-option input:checked + span { background: white; color: var(--slate-950); box-shadow: var(--shadow-sm); }
+                .toggle-option input:checked + span { background: var(--input-bg); color: var(--slate-950); box-shadow: var(--shadow-sm); }
 
                 .search-results {
-                    position: absolute; top: 100%; left: 0; right: 0; background: white;
+                    position: absolute; top: 100%; left: 0; right: 0; background: var(--card-bg);
                     border: 1px solid var(--slate-200); border-radius: 12px;
                     max-height: 200px; overflow-y: auto; z-index: 1000;
                     box-shadow: var(--shadow-deep); margin-top: 0.5rem;
@@ -504,7 +504,7 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
 
                 .deadline-row {
                     display: grid; grid-template-columns: 180px 1fr 180px 48px; gap: 0.9rem; align-items: start;
-                    background: white; border: 1px solid var(--slate-100); padding: 0.85rem; border-radius: 12px;
+                    background: var(--input-bg); border: 1px solid var(--slate-100); padding: 0.85rem; border-radius: 12px;
                 }
                 .btn-remove { background: none; border: none; color: var(--rose-500); cursor: pointer; padding: 5px; border-radius: 8px; }
                 .btn-remove:hover { background: var(--rose-50); }

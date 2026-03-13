@@ -155,7 +155,7 @@ function renderDeadlineList(container, allDeadlines, category, onBack, onRefresh
         <div class="animate-fade-in" style="margin-top: 1rem;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem;">
                 <div style="display: flex; align-items: center; gap: 1rem;">
-                    <button id="btn-back-dashboard" style="background: white; border: 1px solid var(--slate-200); cursor: pointer; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; color: var(--slate-600); transition: var(--transition); box-shadow: var(--shadow-sm);">
+                    <button id="btn-back-dashboard" style="background: var(--card-bg); border: 1px solid var(--slate-200); cursor: pointer; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; color: var(--slate-600); transition: var(--transition); box-shadow: var(--shadow-sm);">
                         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
                     </button>
                     <div>
@@ -168,10 +168,10 @@ function renderDeadlineList(container, allDeadlines, category, onBack, onRefresh
                 </div>
             </div>
 
-            <div class="glass-card" style="padding: 1rem; border-radius: 24px; border: 1px solid var(--slate-100);">
+            <div class="glass-card" style="padding: 1rem; border-radius: 16px; border: 1px solid var(--slate-100);">
                 ${list.length === 0 ? `
                     <div style="padding: 6rem 0; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 1.5rem;">
-                        <div style="background: var(--bg-main); width: 80px; height: 80px; border-radius: 24px; display: flex; align-items: center; justify-content: center; color: var(--slate-200);">
+                        <div style="background: var(--input-bg); width: 80px; height: 80px; border-radius: 16px; display: flex; align-items: center; justify-content: center; color: var(--slate-200);">
                             <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v4l3 3"></path></svg>
                         </div>
                         <div>

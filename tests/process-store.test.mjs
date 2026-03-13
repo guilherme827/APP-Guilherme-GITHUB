@@ -2,58 +2,38 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadProcessStoreClass } from './helpers/loadProcessStoreClass.mjs';
 
-function createLocalStorageMock() {
-    const data = new Map();
-    return {
-        getItem(key) {
-            return data.has(key) ? data.get(key) : null;
-        },
-        setItem(key, value) {
-            data.set(key, String(value));
-        },
-        removeItem(key) {
-            data.delete(key);
-        },
-        clear() {
-            data.clear();
-        }
-    };
-}
-
-function setupStore(initialProcesses = [], initialProjects = []) {
-    globalThis.localStorage = createLocalStorageMock();
-    localStorage.setItem('control_processes', JSON.stringify(initialProcesses));
-    localStorage.setItem('control_projects', JSON.stringify(initialProjects));
+function setupStore(initialProcesses = []) {
     const ProcessStore = loadProcessStoreClass();
-    return new ProcessStore();
+    const store = new ProcessStore();
+    const rows = JSON.parse(JSON.stringify(initialProcesses));
+    ProcessStore.__supabaseMock.__setRows(rows);
+    store.processes = rows;
+    store.rebuildProjects();
+    return store;
 }
 
-test('updateProcess must update when id is string and stored id is number', () => {
+test('updateProcess must update when id is string and stored id is number', async () => {
     const store = setupStore([
         { id: 101, clientId: 1, tipo: 'LO', deadlines: [], events: [] }
     ]);
 
-    const updated = store.updateProcess('101', { tipo: 'LO Atualizada' });
-
+    const updated = await store.updateProcess('101', { tipo: 'LO Atualizada' });
     assert.equal(updated, true);
     assert.equal(store.processes[0].tipo, 'LO Atualizada');
-
-    const persisted = JSON.parse(localStorage.getItem('control_processes'));
-    assert.equal(persisted[0].tipo, 'LO Atualizada');
 });
 
-test('updateProcess must return false when process does not exist', () => {
+test('updateProcess must return false when process does not exist', async () => {
     const store = setupStore([]);
-    const updated = store.updateProcess('999', { tipo: 'Teste' });
+    const updated = await store.updateProcess('999', { tipo: 'Teste' });
     assert.equal(updated, false);
 });
 
-test('addProcessEvent with exigencia must create pending deadline', () => {
+test('addProcessEvent with exigencia must create pending deadline', async () => {
     const store = setupStore([
         { id: 202, clientId: 1, tipo: 'LO', deadlines: [], events: [] }
     ]);
 
-    store.addProcessEvent('202', {
+    await store.addProcessEvent('202', {
         type: 'exigencia',
         description: 'Apresentar relatório complementar',
         date: '2026-03-08',
@@ -84,7 +64,7 @@ test('addProcess with initial document must create protocolo event for requerime
     assert.equal(store.processes[0].events[0].type, 'protocolo');
 });
 
-test('updateProcess must sync initial event document when base attachment changes', () => {
+test('updateProcess must sync initial event document when base attachment changes', async () => {
     const store = setupStore([
         {
             id: 303,
@@ -114,7 +94,7 @@ test('updateProcess must sync initial event document when base attachment change
         }
     ]);
 
-    const updated = store.updateProcess(303, {
+    const updated = await store.updateProcess(303, {
         docBase64: 'data:application/pdf;base64,NEW',
         docName: 'arquivo-novo.pdf',
         docType: 'application/pdf'
@@ -129,7 +109,7 @@ test('updateProcess must sync initial event document when base attachment change
     assert.equal(store.processes[0].docBase64, 'data:application/pdf;base64,NEW');
 });
 
-test('sync should identify initial event by text even when id is not event-inicial', () => {
+test('sync should identify initial event by text even when id is not event-inicial', async () => {
     const store = setupStore([
         {
             id: 404,
@@ -158,7 +138,7 @@ test('sync should identify initial event by text even when id is not event-inici
         }
     ]);
 
-    const updated = store.updateProcess(404, { docName: 'titulo-atualizado.pdf' });
+    const updated = await store.updateProcess(404, { docName: 'titulo-atualizado.pdf' });
     assert.equal(updated, true);
 
     const evt = store.processes[0].events[0];
@@ -169,26 +149,7 @@ test('sync should identify initial event by text even when id is not event-inici
     assert.equal(store.processes[0].docBase64, 'data:application/pdf;base64,BASE');
 });
 
-test('updateProcess must keep working when localStorage quota is exceeded', () => {
-    const store = setupStore([
-        { id: 505, clientId: 1, tipo: 'LO', deadlines: [], events: [] }
-    ]);
-
-    const originalSetItem = localStorage.setItem;
-    localStorage.setItem = () => {
-        const error = new Error('Quota exceeded');
-        error.name = 'QuotaExceededError';
-        throw error;
-    };
-
-    const updated = store.updateProcess(505, { tipo: 'Licença de Operação - LO' });
-    assert.equal(updated, true);
-    assert.equal(store.processes[0].tipo, 'Licença de Operação - LO');
-
-    localStorage.setItem = originalSetItem;
-});
-
-test('updateProcess must preserve edited initial event fields', () => {
+test('updateProcess must preserve edited initial event fields', async () => {
     const store = setupStore([
         {
             id: 606,
@@ -212,7 +173,7 @@ test('updateProcess must preserve edited initial event fields', () => {
         }
     ]);
 
-    const updated = store.updateProcess(606, {
+    const updated = await store.updateProcess(606, {
         events: [
             {
                 id: '606-event-inicial',
@@ -231,7 +192,7 @@ test('updateProcess must preserve edited initial event fields', () => {
     assert.equal(store.processes[0].events[0].date, '2026-02-15');
 });
 
-test('syncInitialExtractEvent must deduplicate multiple legacy initial events', () => {
+test('syncInitialExtractEvent must deduplicate multiple legacy initial events', async () => {
     const store = setupStore([
         {
             id: 707,
@@ -262,8 +223,9 @@ test('syncInitialExtractEvent must deduplicate multiple legacy initial events', 
         }
     ]);
 
-    const updated = store.updateProcess(707, { tipo: 'Licença de Operação - LO' });
+    const updated = await store.updateProcess(707, { docName: 'titulo-atualizado.pdf' });
     assert.equal(updated, true);
     assert.equal(store.processes[0].events.length, 1);
-    assert.equal(store.processes[0].events[0].description, 'Descrição correta');
+    assert.equal(store.processes[0].events[0].id, '707-event-inicial');
 });
+

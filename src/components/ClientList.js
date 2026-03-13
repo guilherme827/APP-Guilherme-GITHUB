@@ -167,14 +167,14 @@ export function renderClientList(container, actionsContainer, onEdit, onAdd, opt
             || null;
 
         container.innerHTML = `
-            <div class="client-master-detail">
+            <div class="client-master-detail bounded-scroll-layout">
                 <aside class="client-master-panel">
                     <div class="client-master-header">
                         <label class="client-master-search">
                             <span class="client-master-search-icon" aria-hidden="true">${searchIcon()}</span>
                             <input type="search" name="client-search" value="${escapeAttribute(state.query)}" placeholder="Buscar titular..." />
                         </label>
-                        ${canEdit ? `<button type="button" class="client-master-add" data-action="add-client" aria-label="Adicionar titular">${plusIcon()}</button>` : ''}
+                        ${canEdit ? `<button type="button" class="client-master-add" data-action="add-client" aria-label="Adicionar titular">${addTitularIcon()}</button>` : ''}
                     </div>
 
                     <div class="client-master-list custom-scrollbar">
@@ -418,8 +418,15 @@ function searchIcon() {
     return `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>`;
 }
 
-function plusIcon() {
-    return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>`;
+function addTitularIcon() {
+    return `
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M19 8v6"></path>
+            <path d="M16 11h6"></path>
+        </svg>
+    `;
 }
 
 function usersIcon() {

@@ -4,25 +4,107 @@ import { showConfirmModal } from './ConfirmModal.js';
 import { showNoticeModal } from './NoticeModal.js';
 import { escapeHtml } from '../utils/sanitize.js';
 
+function escapeAttribute(value) {
+    return escapeHtml(String(value ?? '')).replace(/"/g, '&quot;');
+}
+
+function addProcessIcon() {
+    return `
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            <path d="M12 11v6"></path>
+            <path d="M9 14h6"></path>
+        </svg>
+    `;
+}
+
 export function renderProcessList(container, actionsContainer, onAddProcess, onViewProcess, initialClientId = null, initialProjectId = null, options = {}) {
     // Current Navigation State
     let currentClientId = initialClientId;
     let currentProjectId = initialProjectId;
     const canEdit = options.canEdit !== false;
     const canDelete = options.canDelete === true;
+    const state = {
+        query: ''
+    };
+
+    const getClientsWithProcesses = () => clientStore.clients.filter((client) => (
+        processStore.processes.some((process) => String(process.clientId) === String(client.id))
+    ));
+
+    const getClientName = (client) => (client?.type === 'PF' ? client?.nome : client?.nomeFantasia) || 'Titular';
+    const getClientDocument = (client) => (client?.type === 'PF' ? client?.cpf : client?.cnpj) || 'Documento nao informado';
 
     const render = () => {
         container.innerHTML = '';
         actionsContainer.innerHTML = '';
+        actionsContainer.style.display = 'none';
 
-        // Action Button
-        if (canEdit) {
-            const btnAdd = document.createElement('button');
-            btnAdd.className = 'btn-pill btn-black';
-            btnAdd.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 0.5rem;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> ADICIONAR PROCESSO`;
-            btnAdd.onclick = () => onAddProcess(currentClientId);
-            actionsContainer.appendChild(btnAdd);
+        const clientsWithProcesses = getClientsWithProcesses();
+        if (currentClientId && !clientsWithProcesses.some((client) => String(client.id) === String(currentClientId))) {
+            currentClientId = null;
+            currentProjectId = null;
         }
+        if (!currentClientId && clientsWithProcesses.length) {
+            currentClientId = clientsWithProcesses[0].id;
+        }
+
+        const filteredClients = clientsWithProcesses.filter((client) => {
+            const name = getClientName(client);
+            const doc = getClientDocument(client);
+            const text = `${name} ${doc}`.toLowerCase();
+            return text.includes(String(state.query || '').toLowerCase().trim());
+        });
+
+        container.innerHTML = `
+            <div class="client-master-detail bounded-scroll-layout">
+                <aside class="client-master-panel">
+                    <div class="client-master-header">
+                        <label class="client-master-search">
+                            <span class="client-master-search-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+                            </span>
+                            <input type="search" name="process-client-search" value="${escapeAttribute(state.query)}" placeholder="Buscar titular..." />
+                        </label>
+                        ${canEdit ? `<button type="button" class="client-master-add" data-action="add-process" aria-label="Adicionar processo">${addProcessIcon()}</button>` : ''}
+                    </div>
+                    <div class="client-master-list custom-scrollbar">
+                        ${filteredClients.length === 0 ? `
+                            <div class="client-master-empty">
+                                <p>Nenhum titular com processo encontrado.</p>
+                            </div>
+                        ` : filteredClients.map((client) => `
+                            <button type="button" class="client-master-item ${String(client.id) === String(currentClientId) ? 'is-active' : ''}" data-process-client-id="${client.id}">
+                                <span class="client-master-item-name">${escapeHtml(getClientName(client))}</span>
+                                <span class="client-master-item-doc">${escapeHtml(getClientDocument(client))}</span>
+                            </button>
+                        `).join('')}
+                    </div>
+                </aside>
+                <section class="client-detail-panel custom-scrollbar" id="process-content-panel"></section>
+            </div>
+        `;
+
+        container.querySelector('input[name="process-client-search"]')?.addEventListener('input', (event) => {
+            state.query = String(event.target.value || '');
+            render();
+        });
+        container.querySelector('[data-action="add-process"]')?.addEventListener('click', () => {
+            if (typeof onAddProcess === 'function') {
+                onAddProcess(currentClientId);
+            }
+        });
+
+        container.querySelectorAll('[data-process-client-id]').forEach((button) => {
+            button.addEventListener('click', () => {
+                currentClientId = button.dataset.processClientId;
+                currentProjectId = null;
+                render();
+            });
+        });
+
+        const contentPanel = container.querySelector('#process-content-panel');
+        if (!contentPanel) return;
 
         // Hierarchical Breadcrumbs
         const breadcrumbs = document.createElement('div');
@@ -43,41 +125,21 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
             return span;
         };
 
-        breadcrumbs.appendChild(createCrumb('PROCESSOS', () => { currentClientId = null; currentProjectId = null; render(); }));
-        
-        if (currentClientId) {
+        breadcrumbs.appendChild(createCrumb('PROCESSOS', () => { currentProjectId = null; render(); }));
+        const selectedClient = clientStore.clients.find((client) => String(client.id) === String(currentClientId));
+        if (selectedClient) {
             breadcrumbs.appendChild(document.createTextNode(' > '));
-            const client = clientStore.clients.find(c => c.id === currentClientId);
-            const clientName = client?.type === 'PF' ? client.nome : client.nomeFantasia;
-            breadcrumbs.appendChild(createCrumb(clientName || 'TITULAR', () => { currentProjectId = null; render(); }));
+            breadcrumbs.appendChild(createCrumb(getClientName(selectedClient), () => { currentProjectId = null; render(); }));
         }
-
         if (currentProjectId) {
             breadcrumbs.appendChild(document.createTextNode(' > '));
-            const project = processStore.projects.find(p => p.id === currentProjectId);
+            const project = processStore.projects.find((item) => String(item.id) === String(currentProjectId));
             breadcrumbs.appendChild(createCrumb(project?.name || 'PROJETO'));
         }
+        contentPanel.appendChild(breadcrumbs);
 
-        container.appendChild(breadcrumbs);
-
-        if (!currentClientId) {
-            renderClientSelection();
-        } else if (!currentProjectId) {
-            renderClientProjectsAndProcesses();
-        } else {
-            renderProjectProcesses();
-        }
-    };
-
-    const renderClientSelection = () => {
-        const filteredClients = clientStore.clients.filter(client => {
-            const hasProcesses = processStore.processes.some(p => p.clientId == client.id);
-            const hasProjects = processStore.projects.some(p => p.clientId == client.id);
-            return hasProcesses || hasProjects;
-        });
-
-        if (filteredClients.length === 0) {
-            container.innerHTML += `
+        if (!clientsWithProcesses.length) {
+            contentPanel.innerHTML += `
                 <div class="glass-card animate-fade-in" style="padding: 4rem; text-align: center; border: 1px dashed var(--slate-200);">
                     <p class="label-tech" style="color: var(--slate-400);">NENHUM TITULAR COM PROCESSOS ATIVOS</p>
                     <p style="color: var(--slate-500); margin-top: 1rem;">Adicione um processo vinculado a um titular para ele aparecer nesta lista.</p>
@@ -86,63 +148,14 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
             return;
         }
 
-        const tableCard = document.createElement('div');
-        tableCard.className = 'glass-card animate-fade-in';
-        tableCard.style.padding = '1rem';
-        
-        tableCard.innerHTML = `
-            <table class="data-table">
-                <thead>
-                    <tr>
-                        <th class="label-tech">TITULAR / IDENTIFICAÇÃO</th>
-                        <th class="label-tech">DOCUMENTO</th>
-                        <th class="label-tech" style="text-align: right;">STATUS</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${filteredClients.map(client => {
-                        const name = client.type === 'PF' ? client.nome : client.nomeFantasia;
-                        const projectsCount = processStore.getProjectsByClient(client.id).length;
-                        const processesCount = processStore.processes.filter(p => p.clientId == client.id).length;
-                        
-                        return `
-                        <tr class="clickable-row" data-id="${client.id}" style="cursor: pointer;">
-                            <td>
-                                <div style="display: flex; flex-direction: column;">
-                                    <span class="font-black" style="font-size: 1rem;">${escapeHtml(name)}</span>
-                                    ${client.type === 'PJ' ? `<span class="label-tech" style="font-size: 8px; margin-top: 2px;">${escapeHtml(client.nomeEmpresarial)}</span>` : ''}
-                                </div>
-                            </td>
-                            <td>
-                                <span class="label-tech" style="color: var(--slate-400);">${escapeHtml(client.type === 'PF' ? client.cpf : client.cnpj)}</span>
-                            </td>
-                            <td style="text-align: right;">
-                                <span class="label-tech" style="color: var(--primary);">${projectsCount} PROJETOS • ${processesCount} PROCESSOS</span>
-                            </td>
-                        </tr>
-                    `;}).join('')}
-                </tbody>
-            </table>
-            <style>
-                .clickable-row { transition: var(--transition); }
-                .clickable-row:hover td { background: var(--slate-50); }
-                .clickable-row:hover .font-black { color: var(--primary); transform: translateX(5px); }
-                .clickable-row .font-black { transition: var(--transition); display: inline-block; }
-            </style>
-        `;
-
-        tableCard.querySelectorAll('.clickable-row').forEach(row => {
-            row.onclick = () => { 
-                currentClientId = Number(row.dataset.id); 
-                currentProjectId = null; // Ensure project is reset when changing client
-                render(); 
-            };
-        });
-
-        container.appendChild(tableCard);
+        if (!currentProjectId) {
+            renderClientProjectsAndProcesses(contentPanel);
+        } else {
+            renderProjectProcesses(contentPanel);
+        }
     };
 
-    const renderClientProjectsAndProcesses = () => {
+    const renderClientProjectsAndProcesses = (target) => {
         const projects = processStore.getProjectsByClient(currentClientId);
         
         // Analysis: Group processes
@@ -165,7 +178,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                 card.style.cssText = `
                     cursor: pointer; padding: 2.5rem; transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
                     border: 1px solid var(--slate-100); position: relative; overflow: hidden;
-                    background: linear-gradient(135deg, rgba(255,255,255,0.8) 0%, rgba(248,250,252,0.8) 100%);
+                    background: var(--card-bg);
                 `;
                 
                 card.innerHTML = `
@@ -174,16 +187,16 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                             <div style="background: var(--primary); width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; shadow: 0 4px 12px rgba(16, 185, 129, 0.2);">
                                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="white" stroke-width="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
                             </div>
-                            <div class="label-tech" style="background: var(--primary-light); color: var(--primary); padding: 4px 12px; border-radius: 20px; font-weight: 800; font-size: 9px;">
+                            <div class="label-tech" style="background: var(--primary-light); color: var(--primary); padding: 4px 12px; border-radius: 20px; font-weight: 800; font-size: 11px;">
                                 ${pCount} ${pCount === 1 ? 'PROCESSO' : 'PROCESSOS'}
                             </div>
                         </div>
                         <div>
                             <h4 class="font-black" style="font-size: 1.4rem; color: var(--slate-900); letter-spacing: -0.02em; line-height: 1.2;">${escapeHtml((p.name || '').toUpperCase())}</h4>
                             <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
-                                <span class="label-tech" style="font-size: 8px; color: var(--slate-400);">FOLDER / ID #${p.id}</span>
+                                <span class="label-tech" style="font-size: 11px; color: var(--slate-400);">FOLDER / ID #${p.id}</span>
                                 <div style="width: 4px; height: 4px; background: var(--slate-200); border-radius: 50%;"></div>
-                                <span class="label-tech" style="font-size: 8px; color: var(--primary); font-weight: 800;">VER PROJETO</span>
+                                <span class="label-tech" style="font-size: 11px; color: var(--primary); font-weight: 800;">VER PROJETO</span>
                             </div>
                         </div>
                     </div>
@@ -210,7 +223,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                     .project-card:hover {
                         transform: translateY(-8px) scale(1.02);
                         border-color: var(--primary) !important;
-                        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+                        box-shadow: 0 18px 32px color-mix(in srgb, var(--primary) 18%, transparent);
                     }
                     .project-card:hover .font-black {
                         color: var(--primary) !important;
@@ -239,10 +252,10 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
             section.appendChild(renderProcessTable(generalProcesses));
         }
 
-        container.appendChild(section);
+        target.appendChild(section);
     };
 
-    const renderProjectProcesses = () => {
+    const renderProjectProcesses = (target) => {
         const allProcesses = processStore.processes;
         const allProjects = processStore.projects;
         
@@ -279,7 +292,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
         } else {
             section.appendChild(renderProcessTable(processes));
         }
-        container.appendChild(section);
+        target.appendChild(section);
     };
 
     const renderProcessTable = (processes) => {
@@ -381,12 +394,12 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                             <td style="text-align: center;">
                                 <div style="display: flex; flex-direction: column; align-items: center; gap: 2px;">
                                     <span class="font-black" style="font-size: 1.1rem; ${deadlineCount > 0 ? 'color: var(--primary);' : 'color: var(--slate-300);'}">${deadlineCount}</span>
-                                    <span style="font-size: 8px; color: var(--slate-400); text-transform: uppercase;">${deadlineCount === 1 ? 'PRAZO' : 'PRAZOS'}</span>
+                                    <span style="font-size: 11px; color: var(--slate-400); text-transform: uppercase;">${deadlineCount === 1 ? 'PRAZO' : 'PRAZOS'}</span>
                                 </div>
                             </td>
                             <td style="text-align: center;">
                                 <div style="display: flex; flex-direction: column; align-items: center; gap: 2px;">
-                                    <span style="font-size: 8px; color: var(--slate-400); text-transform: uppercase; letter-spacing: 0.05em;">${dateLabel}</span>
+                                    <span style="font-size: 11px; color: var(--slate-400); text-transform: uppercase; letter-spacing: 0.05em;">${dateLabel}</span>
                                     <span class="font-black" style="font-size: 0.9rem;">${dateValue}</span>
                                     ${daysLabel ? `<span style="font-size: 9px; font-weight: 700; color: ${daysColor}; text-transform: uppercase;">${daysLabel}</span>` : ''}
                                 </div>
@@ -396,7 +409,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                                     ${(canEdit || canDelete) ? `<button class="proc-menu-btn" data-id="${p.id}" style="background: none; border: none; cursor: pointer; padding: 6px; border-radius: 8px; color: var(--slate-400); display: flex; align-items: center;">
                                         <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
                                     </button>` : ''}
-                                    ${(canEdit || canDelete) ? `<div class="proc-menu-dropdown hidden" data-id="${p.id}" style="position: absolute; right: 0; top: 100%; background: white; border: 1px solid var(--slate-200); border-radius: 12px; box-shadow: var(--shadow-deep); z-index: 1000; min-width: 140px; padding: 6px; overflow: hidden;">
+                                    ${(canEdit || canDelete) ? `<div class="proc-menu-dropdown hidden" data-id="${p.id}" style="position: absolute; right: 0; top: 100%; z-index: 1000; min-width: 140px; padding: 6px; overflow: hidden;">
                                         ${canEdit ? `<div class="proc-action" data-action="edit" data-id="${p.id}" style="padding: 8px 12px; cursor: pointer; border-radius: 8px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;">
                                             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                                             EDITAR
@@ -418,16 +431,10 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
             </table>
             <style>
                 .proc-table td, .proc-table th { vertical-align: middle; padding: 1rem 0.75rem; }
-                .process-row { transition: var(--transition); position: relative; cursor: pointer; }
-                .process-row:hover td { background: #f0fdf4 !important; }
-                .process-row:hover .process-row-open { opacity: 1; }
-                .process-row td:first-child { border-left: 3px solid transparent; transition: var(--transition); }
-                .process-row:hover td:first-child { border-left-color: var(--primary); }
-                .phase-tag { padding: 2px 8px; border-radius: 4px; font-size: 8px; font-weight: 800; letter-spacing: 0.05em; }
+                .phase-tag { padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; letter-spacing: 0.05em; }
                 .phase-tag-green { background: #dcfce7; color: #166534; }
                 .phase-tag-blue { background: #dbeafe; color: #1e40af; }
                 .proc-menu-btn:hover { background: var(--slate-100) !important; color: var(--slate-700) !important; }
-                .proc-menu-dropdown .proc-action:hover { background: var(--slate-50); }
                 .proc-menu-dropdown.hidden { display: none; }
             </style>
         `;
@@ -486,7 +493,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
         });
 
         // Close menus on click in the process view area
-        container.onclick = () => {
+        tableCard.onclick = () => {
             tableCard.querySelectorAll('.proc-menu-dropdown').forEach(d => d.classList.add('hidden'));
         };
 

@@ -6,6 +6,7 @@
   "scripts": {
     "test": "npm run test:unit",
     "test:unit": "node --test tests/**/*.test.mjs",
+    "test:dashboard": "node --test tests/dashboard-grid-engine.test.mjs",
     "test:ci": "npm run build && npm run test:unit",
     "dev": "vite",
     "build": "vite build",
