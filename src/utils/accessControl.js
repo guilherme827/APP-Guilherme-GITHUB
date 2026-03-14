@@ -1,4 +1,5 @@
 export const FOLDER_OPTIONS = [
+    { id: 'organizacoes', label: 'Organizações' },
     { id: 'painel', label: 'Painel Central' },
     { id: 'clientes', label: 'Titulares' },
     { id: 'processos', label: 'Processos' },
@@ -13,6 +14,10 @@ export const DEFAULT_PERMISSIONS = {
     delete: false
 };
 
+export const ROLE_SUPER_ADMIN = 'super_admin';
+export const ROLE_ADMIN = 'admin';
+export const ROLE_USER = 'user';
+
 export function normalizePermissions(permissions) {
     return {
         view: permissions?.view !== false,
@@ -23,17 +28,30 @@ export function normalizePermissions(permissions) {
 
 export function normalizeFolderAccess(folderAccess) {
     if (!Array.isArray(folderAccess)) {
-        return FOLDER_OPTIONS.map((folder) => folder.id);
+        return FOLDER_OPTIONS
+            .map((folder) => folder.id)
+            .filter((folderId) => folderId !== 'organizacoes');
     }
     return [...new Set(folderAccess.filter(Boolean))];
 }
 
+export function hasSuperAdminAccess(profile) {
+    return profile?.role === ROLE_SUPER_ADMIN;
+}
+
+export function hasOfficeAdminAccess(profile) {
+    return profile?.role === ROLE_ADMIN;
+}
+
 export function hasAdminAccess(profile) {
-    return profile?.role === 'admin';
+    return hasSuperAdminAccess(profile) || hasOfficeAdminAccess(profile);
 }
 
 export function canViewSection(profile, sectionId) {
-    if (hasAdminAccess(profile)) return true;
+    if (hasSuperAdminAccess(profile)) {
+        return sectionId === 'organizacoes' || sectionId === 'configuracoes';
+    }
+    if (hasOfficeAdminAccess(profile)) return sectionId !== 'organizacoes';
     const permissions = normalizePermissions(profile?.permissions);
     const folders = normalizeFolderAccess(profile?.folder_access);
     return permissions.view && folders.includes(sectionId);

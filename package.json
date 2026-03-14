@@ -10,6 +10,7 @@
     "test:ci": "npm run build && npm run test:unit",
     "test:e2e": "playwright test",
     "test:smoke": "playwright test tests/e2e/smoke.spec.cjs",
+    "provision:multitenant": "node scripts/provision-multitenant-setup.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"

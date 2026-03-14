@@ -35,6 +35,7 @@ export function buildProjectsFromProcesses(processes) {
 export function mapClientRowToModel(row) {
     return {
         id: row.id,
+        organizationId: row.organization_id || null,
         type: row.type,
         nome: row.nome || '',
         cpf: row.cpf || '',
@@ -55,6 +56,7 @@ export function mapClientRowToModel(row) {
 
 export function mapClientModelToRow(client) {
     return {
+        organization_id: client.organizationId || null,
         type: client.type || 'PF',
         nome: client.type === 'PF' ? (client.nome || '') : '',
         cpf: client.type === 'PF' ? (client.cpf || '') : '',
@@ -77,6 +79,7 @@ export function mapProcessRowToModel(row) {
     const projectName = normalizeProjectName(row.project_name);
     return {
         id: row.id,
+        organizationId: row.organization_id || null,
         clientId: row.client_id,
         projectId: buildProjectId(row.client_id, projectName),
         projectName,
@@ -105,6 +108,7 @@ export function mapProcessRowToModel(row) {
 
 export function mapProcessModelToRow(process, resolvedProjectName = '') {
     return {
+        organization_id: process.organizationId || null,
         client_id: Number(process.clientId),
         project_name: normalizeProjectName(resolvedProjectName),
         fase: process.fase || 'Requerimento',

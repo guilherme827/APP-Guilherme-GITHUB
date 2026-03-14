@@ -11,6 +11,7 @@ function getFallbackProfile(userId, email = '') {
         email: String(email || '').trim(),
         full_name: '',
         role: 'user',
+        organization_id: null,
         gender: 'neutro',
         permissions: {
             view: true,
@@ -104,6 +105,38 @@ export const profileService = {
         return fetchAccountApi({
             method: 'PATCH',
             body: JSON.stringify(payload)
+        });
+    },
+
+    async listOrganizations() {
+        return fetch('/api/organizations', {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${await authService.getAccessToken()}`
+            }
+        }).then(async (response) => {
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload?.error || 'Falha ao carregar organizações.');
+            }
+            return payload?.data || [];
+        });
+    },
+
+    async createOrganization(payload) {
+        return fetch('/api/organizations', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${await authService.getAccessToken()}`
+            },
+            body: JSON.stringify(payload)
+        }).then(async (response) => {
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(body?.error || 'Falha ao criar organização.');
+            }
+            return body?.data || null;
         });
     }
 };

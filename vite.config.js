@@ -2,6 +2,7 @@ const { defineConfig, loadEnv } = require('vite');
 const accountHandler = require('./server/accountHandler.cjs');
 const aiAnalyzeHandler = require('./server/aiAnalyzeHandler.cjs');
 const loginSupportHandler = require('./server/loginSupportHandler.cjs');
+const organizationsHandler = require('./server/organizationsHandler.cjs');
 const teamMembersHandler = require('./server/teamMembersHandler.cjs');
 
 function teamMembersPlugin(env) {
@@ -13,6 +14,9 @@ function teamMembersPlugin(env) {
             });
             server.middlewares.use('/api/team-members', async (req, res) => {
                 await teamMembersHandler(req, res, env);
+            });
+            server.middlewares.use('/api/organizations', async (req, res) => {
+                await organizationsHandler(req, res, env);
             });
             server.middlewares.use('/api/ai-analyze', async (req, res) => {
                 await aiAnalyzeHandler(req, res, env);

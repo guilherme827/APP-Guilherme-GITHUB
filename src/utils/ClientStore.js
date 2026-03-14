@@ -5,6 +5,12 @@ function getSupabaseMessage(error, fallback) {
     return error?.message || fallback;
 }
 
+function getCurrentOrganizationId() {
+    return typeof globalThis !== 'undefined' && globalThis.__APP_CONTROL_ACTIVE_ORG_ID__
+        ? String(globalThis.__APP_CONTROL_ACTIVE_ORG_ID__)
+        : null;
+}
+
 export class ClientStore {
     constructor() {
         this.clients = [];
@@ -13,9 +19,11 @@ export class ClientStore {
     }
 
     async hydrate() {
+        const organizationId = getCurrentOrganizationId();
         const { data, error } = await supabase
             .from('clients')
             .select('*')
+            .eq('organization_id', organizationId)
             .order('id', { ascending: true });
 
         if (error) {
@@ -73,7 +81,11 @@ export class ClientStore {
 
     async addClient(client) {
         this.checkUniqueness(client);
-        const payload = mapClientModelToRow({ ...client, documents: client.documents || [] });
+        const payload = mapClientModelToRow({
+            ...client,
+            organizationId: getCurrentOrganizationId(),
+            documents: client.documents || []
+        });
 
         const { data, error } = await supabase
             .from('clients')
@@ -92,12 +104,16 @@ export class ClientStore {
 
     async updateClient(id, updatedData) {
         this.checkUniqueness(updatedData, id);
-        const payload = mapClientModelToRow(updatedData);
+        const payload = mapClientModelToRow({
+            ...updatedData,
+            organizationId: getCurrentOrganizationId()
+        });
 
         const { data, error } = await supabase
             .from('clients')
             .update(payload)
             .eq('id', id)
+            .eq('organization_id', getCurrentOrganizationId())
             .select()
             .single();
 
@@ -114,7 +130,8 @@ export class ClientStore {
         const { count, error: countError } = await supabase
             .from('processes')
             .select('id', { count: 'exact', head: true })
-            .eq('client_id', id);
+            .eq('client_id', id)
+            .eq('organization_id', getCurrentOrganizationId());
 
         if (countError) {
             throw new Error(getSupabaseMessage(countError, 'Não foi possível validar vínculos do titular.'));
@@ -127,7 +144,8 @@ export class ClientStore {
         const { error } = await supabase
             .from('clients')
             .delete()
-            .eq('id', id);
+            .eq('id', id)
+            .eq('organization_id', getCurrentOrganizationId());
 
         if (error) {
             throw new Error(getSupabaseMessage(error, 'Não foi possível excluir o titular.'));

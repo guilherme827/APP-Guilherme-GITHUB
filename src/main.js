@@ -7,6 +7,7 @@ import { authService } from './utils/AuthService.js';
 import { profileService } from './utils/ProfileService.js';
 import { showNoticeModal } from './components/NoticeModal.js';
 import { createAppRuntimeState } from './app/appRuntimeState.js';
+import { resetActiveOrganizationId, setActiveOrganizationId } from './app/organizationContext.js';
 import {
     getUserScopedStorageKey
 } from './dashboard/userScopedStorage.js';
@@ -14,7 +15,9 @@ import {
     canDeleteContent,
     canEditContent,
     canViewSection,
-    hasAdminAccess
+    hasAdminAccess,
+    hasOfficeAdminAccess,
+    hasSuperAdminAccess
 } from './utils/accessControl.js';
 import {
     reportUiError,
@@ -240,6 +243,10 @@ function loadDashboardViewModule() {
     return loadComponentModule('dashboard-view', () => import('./components/DashboardView.js'));
 }
 
+function loadOrganizationAdminViewModule() {
+    return loadComponentModule('organization-admin-view', () => import('./components/OrganizationAdminView.js'));
+}
+
 function authLog(...args) {
     if (!AUTH_DEBUG) return;
     console.log('[auth-debug]', ...args);
@@ -294,6 +301,7 @@ function buildEmergencyProfile(session) {
         email: session?.user?.email || '',
         full_name: '',
         role: 'user',
+        organization_id: null,
         gender: 'neutro',
         permissions: { view: true, edit: false, delete: false },
         folder_access: ['painel', 'clientes', 'processos', 'prazos', 'configuracoes']
@@ -361,6 +369,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
+        setActiveOrganizationId(state.currentProfile?.organization_id || null);
+
         let clientLoadResult;
         let processLoadResult;
         if (e2eOverrides) {
@@ -410,8 +420,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             sessionUserId: session?.user?.id || null
         });
         state.disposeHeaderMenu?.();
-        const isAdmin = hasAdminAccess(state.currentProfile);
-        const visibleSections = ['painel', 'clientes', 'processos', 'prazos', 'financeiro', 'configuracoes']
+        const isAdmin = hasOfficeAdminAccess(state.currentProfile);
+        const isSuperAdmin = hasSuperAdminAccess(state.currentProfile);
+        const visibleSections = ['organizacoes', 'painel', 'clientes', 'processos', 'prazos', 'financeiro', 'configuracoes']
             .filter((sectionId) => canViewSection(state.currentProfile, sectionId));
         const displayName = getProfileDisplayName(state.currentProfile, session?.user?.email || '');
         const headerGreeting = getHeaderGreeting(state.currentProfile, session?.user?.email || '');
@@ -485,7 +496,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const viewHeader = document.getElementById('view-header');
 
         const ensureTeamProfilesLoaded = async (force = false) => {
-            if (!hasAdminAccess(state.currentProfile)) {
+            if (!hasOfficeAdminAccess(state.currentProfile)) {
                 teamProfiles = [];
                 state.teamProfilesLoaded = false;
                 return [];
@@ -508,6 +519,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             return teamProfiles;
         };
 
+        const ensureOrganizationsLoaded = async (force = false) => {
+            if (!isSuperAdmin) {
+                state.organizations = [];
+                state.organizationsLoaded = false;
+                return [];
+            }
+            if (state.organizationsLoaded && !force) return state.organizations;
+            state.organizations = await profileService.listOrganizations();
+            state.organizationsLoaded = true;
+            return state.organizations;
+        };
+
         let navigationSequence = 0;
 
         const navigate = async (id) => {
@@ -521,7 +544,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (id !== 'equipe' && !canViewSection(state.currentProfile, id)) {
                 authLog('navigate:blocked by permission', { id, role: state.currentProfile?.role });
                 showNoticeModal('Acesso restrito', 'Seu perfil não possui acesso a esta área.');
-                void navigate('painel');
+                void navigate(hasSuperAdminAccess(state.currentProfile) ? 'organizacoes' : 'painel');
                 return;
             }
 
@@ -531,7 +554,45 @@ document.addEventListener('DOMContentLoaded', async () => {
                 item.classList.toggle('active', item.dataset.id === id);
             });
 
-            if (id === 'painel') {
+            if (id === 'organizacoes') {
+                if (viewHeader) viewHeader.style.display = 'flex';
+                if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
+                if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
+                renderViewLoading(contentArea, 'Carregando organizações...');
+                try {
+                    await ensureOrganizationsLoaded();
+                } catch (error) {
+                    showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível carregar as organizações.');
+                }
+                const { renderOrganizationAdminView } = await loadOrganizationAdminViewModule();
+                if (navigationId !== navigationSequence || state.currentSection !== id) return;
+                renderOrganizationAdminView(contentArea, {
+                    organizations: state.organizations,
+                    loading: false,
+                    createLoading: state.organizationCreateLoading,
+                    onRefresh: async () => {
+                        try {
+                            await ensureOrganizationsLoaded(true);
+                            void navigate('organizacoes');
+                        } catch (error) {
+                            showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível atualizar as organizações.');
+                        }
+                    },
+                    onCreateOrganization: async (payload) => {
+                        try {
+                            state.organizationCreateLoading = true;
+                            await profileService.createOrganization(payload);
+                            await ensureOrganizationsLoaded(true);
+                            showNoticeModal('Organização criada', 'A nova organização e o administrador principal foram provisionados com sucesso.');
+                            void navigate('organizacoes');
+                        } catch (error) {
+                            showNoticeModal('Erro ao criar', error?.message || 'Não foi possível criar a organização.');
+                        } finally {
+                            state.organizationCreateLoading = false;
+                        }
+                    }
+                });
+            } else if (id === 'painel') {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'space-between';
                 if (viewHeader) viewHeader.classList.add('view-header-floating-left');
@@ -638,7 +699,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
                 if (!isAdmin) {
-                    void navigate('painel');
+                    void navigate(hasSuperAdminAccess(state.currentProfile) ? 'organizacoes' : 'painel');
                     return;
                 }
                 renderViewLoading(contentArea, 'Carregando equipe...');
@@ -831,7 +892,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         initDock(navigate);
-        const defaultSection = ['painel', 'clientes', 'processos', 'prazos', 'configuracoes']
+        const defaultSection = ['organizacoes', 'painel', 'clientes', 'processos', 'prazos', 'configuracoes']
             .find((sectionId) => canViewSection(state.currentProfile, sectionId)) || 'painel';
         const targetSection = canViewSection(state.currentProfile, state.currentSection) ? state.currentSection : defaultSection;
         authLog('renderAuthenticatedApp:initial-section', { currentSection: state.currentSection, defaultSection, targetSection });
@@ -869,8 +930,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             state.currentProfile = null;
             teamProfiles = [];
             state.teamProfilesLoaded = false;
+            state.organizations = [];
+            state.organizationsLoaded = false;
             clientStore.reset();
             processStore.reset();
+            resetActiveOrganizationId();
             state.hasRenderedProtectedApp = false;
             state.currentSection = 'painel';
             navigateTo(LOGIN_ROUTE, true);

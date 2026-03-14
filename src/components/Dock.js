@@ -3,6 +3,7 @@ import { getUserInitials } from './Header.js';
 
 export function renderDock({ visibleIds = [], fullName = '', email = '' } = {}) {
     const primaryItems = [
+        { id: 'organizacoes', label: 'Organizações', icon: iconBuildings() },
         { id: 'painel', label: 'Painel Central', icon: iconDashboard() },
         { id: 'clientes', label: 'Titulares', icon: iconUsers() },
         { id: 'processos', label: 'Processos', icon: iconFolder() },
@@ -60,6 +61,10 @@ export function initDock(onNavigate) {
 
 function iconDashboard() {
     return `<svg class="dock-icon-svg dock-icon-svg--painel" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect class="dock-panel-tile tile-a" x="3" y="3" width="7" height="7"></rect><rect class="dock-panel-tile tile-b" x="14" y="3" width="7" height="7"></rect><rect class="dock-panel-tile tile-c" x="14" y="14" width="7" height="7"></rect><rect class="dock-panel-tile tile-d" x="3" y="14" width="7" height="7"></rect></svg>`;
+}
+
+function iconBuildings() {
+    return `<svg class="dock-icon-svg dock-icon-svg--organizacoes" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path><path d="M9 9h.01"></path><path d="M9 13h.01"></path><path d="M9 17h.01"></path><path d="M13 13h.01"></path><path d="M13 17h.01"></path></svg>`;
 }
 
 function iconUsers() {

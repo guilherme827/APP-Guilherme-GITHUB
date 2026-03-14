@@ -10,6 +10,12 @@ function getSupabaseMessage(error, fallback) {
     return error?.message || fallback;
 }
 
+function getCurrentOrganizationId() {
+    return typeof globalThis !== 'undefined' && globalThis.__APP_CONTROL_ACTIVE_ORG_ID__
+        ? String(globalThis.__APP_CONTROL_ACTIVE_ORG_ID__)
+        : null;
+}
+
 export class ProcessStore {
     constructor() {
         this.processes = [];
@@ -19,9 +25,11 @@ export class ProcessStore {
     }
 
     async hydrate() {
+        const organizationId = getCurrentOrganizationId();
         const { data, error } = await supabase
             .from('processes')
             .select('*')
+            .eq('organization_id', organizationId)
             .order('id', { ascending: true });
 
         if (error) {
@@ -300,6 +308,7 @@ export class ProcessStore {
 
         const preparedProcess = {
             ...processData,
+            organizationId: getCurrentOrganizationId(),
             projectId: project?.id || null,
             projectName: project?.name || '',
             clientId: Number(processData.clientId),
@@ -359,6 +368,7 @@ export class ProcessStore {
         const nextProcess = {
             ...existingProcess,
             ...updatedData,
+            organizationId: existingProcess.organizationId || getCurrentOrganizationId(),
             clientId: Number(updatedData.clientId || existingProcess.clientId),
             projectId: project?.id || null,
             projectName: project?.name || '',
@@ -391,6 +401,7 @@ export class ProcessStore {
             .from('processes')
             .update(payload)
             .eq('id', id)
+            .eq('organization_id', getCurrentOrganizationId())
             .select()
             .single();
 
@@ -454,7 +465,8 @@ export class ProcessStore {
         const { error } = await supabase
             .from('processes')
             .delete()
-            .eq('id', id);
+            .eq('id', id)
+            .eq('organization_id', getCurrentOrganizationId());
 
         if (error) {
             throw new Error(getSupabaseMessage(error, 'Não foi possível excluir o processo.'));

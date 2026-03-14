@@ -70,6 +70,10 @@ async function authenticateAdmin(req, env) {
         return { error: { status: 403, message: 'Apenas administradores podem gerenciar a equipe.' } };
     }
 
+    if (!profile.organization_id) {
+        return { error: { status: 403, message: 'Administrador sem organização vinculada.' } };
+    }
+
     return { serviceClient, adminProfile: profile };
 }
 
@@ -107,6 +111,7 @@ async function handleGet(req, res, env) {
     const { data, error } = await auth.serviceClient
         .from('profiles')
         .select('*')
+        .eq('organization_id', auth.adminProfile.organization_id)
         .order('email', { ascending: true });
 
     if (error) {
@@ -145,7 +150,8 @@ async function handlePost(req, res, env) {
         user_metadata: {
             full_name: payload.full_name,
             gender: payload.gender,
-            role: payload.role
+            role: payload.role,
+            organization_id: auth.adminProfile.organization_id
         }
     });
 
@@ -162,6 +168,7 @@ async function handlePost(req, res, env) {
             full_name: payload.full_name,
             gender: payload.gender,
             role: payload.role,
+            organization_id: auth.adminProfile.organization_id,
             permissions: payload.permissions,
             folder_access: payload.folder_access
         })
@@ -211,6 +218,7 @@ async function handlePatch(req, res, env) {
         .from('profiles')
         .update(updatePayload)
         .eq('id', memberId)
+        .eq('organization_id', auth.adminProfile.organization_id)
         .select('*')
         .single();
 
