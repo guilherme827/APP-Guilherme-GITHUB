@@ -1,15 +1,7 @@
 import { escapeHtml } from '../utils/sanitize.js';
 
-const EARTH_TEXTURE = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
-
 export function renderHeader() {
     return `
-        <style>
-            @keyframes earth-spin {
-                from { transform: translateX(0); }
-                to { transform: translateX(-50%); }
-            }
-        </style>
         <header id="top-header">
             <div class="header-brand">
                 <div class="header-logo-lockup">
@@ -17,14 +9,15 @@ export function renderHeader() {
                         <span class="header-wordmark-text">GEOC</span>
                         <span class="header-globe" aria-hidden="true">
                             <span class="header-globe-track">
-                                <img src="${EARTH_TEXTURE}" alt="" />
-                                <img src="${EARTH_TEXTURE}" alt="" />
+                                <span class="header-globe-map"></span>
+                                <span class="header-globe-map"></span>
                             </span>
+                            <span class="header-globe-shine"></span>
                             <span class="header-globe-shade"></span>
                         </span>
                         <span class="header-wordmark-text">NSULT</span>
                     </div>
-                    <p class="header-tagline">Gestao Ambiental</p>
+                    <p class="header-tagline-pill">SISTEMA DE GESTAO INTELIGENTE</p>
                 </div>
             </div>
 

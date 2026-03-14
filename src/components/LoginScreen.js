@@ -242,7 +242,7 @@ export function renderLoginScreen(container, onLogin) {
                             <span class="geo-login-wordmark-text">NSULT</span>
                         </div>
                         <div class="geo-login-tagline-pill">
-                            Geologia, Mineracao e Servicos Ambientais
+                            SISTEMA DE GESTAO INTELIGENTE
                         </div>
                     </div>
 

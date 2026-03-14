@@ -75,7 +75,7 @@ export default function GeoconsultLoginReact() {
                         </div>
 
                         <div className="rounded-full border border-slate-700/50 bg-slate-800/40 px-4 py-1.5 text-center text-[8px] font-semibold uppercase tracking-[0.2em] text-slate-300 backdrop-blur-sm sm:text-[9px]">
-                            Geologia, Mineracao e Servicos Ambientais
+                            SISTEMA DE GESTAO INTELIGENTE
                         </div>
                     </div>
 
