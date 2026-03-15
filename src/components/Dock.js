@@ -1,7 +1,4 @@
-import { escapeHtml } from '../utils/sanitize.js';
-import { getUserInitials } from './Header.js';
-
-export function renderDock({ visibleIds = [], fullName = '', email = '' } = {}) {
+export function renderDock({ visibleIds = [] } = {}) {
     const primaryItems = [
         { id: 'organizacoes', label: 'Organizações', icon: iconBuildings() },
         { id: 'painel', label: 'Painel Central', icon: iconDashboard() },
@@ -12,21 +9,14 @@ export function renderDock({ visibleIds = [], fullName = '', email = '' } = {}) 
     ].filter((item) => visibleIds.length === 0 || visibleIds.includes(item.id));
 
     const settingsEnabled = visibleIds.length === 0 || visibleIds.includes('configuracoes');
-    const safeName = escapeHtml(fullName || email || 'Usuario');
-    const initials = escapeHtml(getUserInitials(fullName, email));
+    const adminPanelEnabled = visibleIds.length === 0 || visibleIds.includes('admin-panel');
 
     return `
         <nav id="dock-container" aria-label="Navegacao principal">
             ${primaryItems.map((item) => renderDockItem(item)).join('')}
-            <div class="dock-separator" aria-hidden="true"></div>
-            ${settingsEnabled ? renderDockItem({ id: 'configuracoes', label: 'Configuracoes', icon: iconSettings() }) : ''}
-            <div class="dock-separator" aria-hidden="true"></div>
-            <button type="button" class="dock-profile-button dock-item" data-id="configuracoes" aria-label="${safeName}">
-                <span class="dock-profile-ring">
-                    <span class="dock-profile-core">${initials}</span>
-                </span>
-                <span class="dock-tooltip">${safeName}</span>
-            </button>
+            ${adminPanelEnabled || settingsEnabled ? '<div class="dock-separator" aria-hidden="true"></div>' : ''}
+            ${adminPanelEnabled ? renderDockItem({ id: 'admin-panel', label: 'Painel do administrador', icon: iconAdmin() }) : ''}
+            ${settingsEnabled ? renderDockItem({ id: 'configuracoes', label: 'Configurações', icon: iconSettings() }) : ''}
         </nav>
     `;
 }
@@ -50,7 +40,7 @@ export function initDock(onNavigate) {
             const id = item.dataset.id;
             if (!id) return;
             document.querySelectorAll('.dock-item').forEach((node) => {
-                node.classList.toggle('active', node.dataset.id === id && !node.classList.contains('dock-profile-button'));
+                node.classList.toggle('active', node.dataset.id === id);
             });
             if (typeof onNavigate === 'function') {
                 onNavigate(id);
@@ -83,6 +73,10 @@ function iconDollar() {
     return `<svg class="dock-icon-svg dock-icon-svg--financeiro" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path><circle cx="12" cy="12" r="10" stroke-opacity="0.2"></circle></svg>`;
 }
 
+function iconAdmin() {
+    return `<svg class="dock-icon-svg dock-icon-svg--admin-panel" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>`;
+}
+
 function iconSettings() {
-    return `<svg class="dock-icon-svg dock-icon-svg--configuracoes" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>`;
+    return `<svg class="dock-icon-svg dock-icon-svg--configuracoes" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 2 2 2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>`;
 }

@@ -5,15 +5,14 @@ import {
     mapProcessModelToRow,
     mapProcessRowToModel
 } from './supabaseMappers.js';
+import { getActiveOrganizationId } from '../app/organizationContext.js';
 
 function getSupabaseMessage(error, fallback) {
     return error?.message || fallback;
 }
 
 function getCurrentOrganizationId() {
-    return typeof globalThis !== 'undefined' && globalThis.__APP_CONTROL_ACTIVE_ORG_ID__
-        ? String(globalThis.__APP_CONTROL_ACTIVE_ORG_ID__)
-        : null;
+    return getActiveOrganizationId();
 }
 
 export class ProcessStore {

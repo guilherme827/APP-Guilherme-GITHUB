@@ -45,10 +45,6 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
             currentClientId = null;
             currentProjectId = null;
         }
-        if (!currentClientId && clientsWithProcesses.length) {
-            currentClientId = clientsWithProcesses[0].id;
-        }
-
         const filteredClients = clientsWithProcesses.filter((client) => {
             const name = getClientName(client);
             const doc = getClientDocument(client);
@@ -143,6 +139,16 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                 <div class="glass-card animate-fade-in" style="padding: 4rem; text-align: center; border: 1px dashed var(--slate-200);">
                     <p class="label-tech" style="color: var(--slate-400);">NENHUM TITULAR COM PROCESSOS ATIVOS</p>
                     <p style="color: var(--slate-500); margin-top: 1rem;">Adicione um processo vinculado a um titular para ele aparecer nesta lista.</p>
+                </div>
+            `;
+            return;
+        }
+
+        if (!currentClientId) {
+            contentPanel.innerHTML += `
+                <div class="glass-card animate-fade-in" style="padding: 4rem; text-align: center; border: 1px dashed var(--slate-200);">
+                    <p class="label-tech" style="color: var(--slate-400);">SELECIONE UM TITULAR</p>
+                    <p style="color: var(--slate-500); margin-top: 1rem;">Escolha um titular na lista ao lado para abrir os processos vinculados.</p>
                 </div>
             `;
             return;

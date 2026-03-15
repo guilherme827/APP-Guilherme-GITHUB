@@ -19,6 +19,7 @@ function getFolderAccess(folderAccess) {
 
 export function renderTeamSettings(container, {
     currentProfile,
+    availableModules,
     profiles,
     loading,
     createLoading,
@@ -26,6 +27,10 @@ export function renderTeamSettings(container, {
     onCreateMember,
     onUpdateMember
 }) {
+    const availableFolders = Array.isArray(availableModules) && availableModules.length > 0
+        ? FOLDER_OPTIONS.filter((folder) => folder.id !== 'organizacoes' && availableModules.includes(folder.id))
+        : FOLDER_OPTIONS.filter((folder) => folder.id !== 'organizacoes');
+
     container.innerHTML = `
         <div class="animate-fade-in" style="max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 1.5rem;">
             <aside class="glass-card">
@@ -51,14 +56,6 @@ export function renderTeamSettings(container, {
                         <input name="password" type="password" required placeholder="Crie uma senha inicial" />
                     </label>
                     <label style="display: flex; flex-direction: column; gap: 0.45rem;">
-                        <span class="label-tech">Gênero</span>
-                        <select name="gender">
-                            <option value="neutro">Colaborador(a)</option>
-                            <option value="masculino">Colaborador</option>
-                            <option value="feminino">Colaboradora</option>
-                        </select>
-                    </label>
-                    <label style="display: flex; flex-direction: column; gap: 0.45rem;">
                         <span class="label-tech">Role</span>
                         <select name="role">
                             <option value="user">Colaborador(a)</option>
@@ -76,7 +73,7 @@ export function renderTeamSettings(container, {
                     <div style="padding: 1rem; border-radius: 18px; background: var(--bg-main); border: 1px solid var(--slate-200);">
                         <p class="label-tech" style="margin-bottom: 0.75rem;">Acesso por Pastas</p>
                         <div style="display: grid; gap: 0.65rem;">
-                            ${FOLDER_OPTIONS.map((folder) => `
+                            ${availableFolders.map((folder) => `
                                 <label class="team-check">
                                     <input type="checkbox" name="folder_access" value="${folder.id}" checked />
                                     ${escapeHtml(folder.label)}
@@ -115,7 +112,6 @@ export function renderTeamSettings(container, {
                                 </div>
                                 <div style="text-align: right;">
                                     <span class="label-tech" style="display: inline-flex; padding: 0.35rem 0.6rem; border-radius: 9999px; background: ${profile.role === 'admin' ? 'rgba(59,130,246,0.14)' : 'rgba(16,185,129,0.14)'}; color: ${profile.role === 'admin' ? 'var(--blue-500)' : 'var(--primary)'};">${escapeHtml(profile.role)}</span>
-                                    <p class="label-tech" style="margin-top: 0.45rem;">${profile.gender === 'feminino' ? 'Colaboradora' : profile.gender === 'masculino' ? 'Colaborador' : 'Colaborador(a)'}</p>
                                 </div>
                             </div>
 
@@ -143,7 +139,7 @@ export function renderTeamSettings(container, {
                                 <div style="padding: 0.95rem; border-radius: 18px; background: var(--card-bg); border: 1px solid var(--slate-200);">
                                     <p class="label-tech" style="margin-bottom: 0.75rem;">Acesso por Pastas</p>
                                     <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem;">
-                                        ${FOLDER_OPTIONS.map((folder) => `
+                                        ${availableFolders.map((folder) => `
                                             <label class="team-check">
                                                 <input
                                                     type="checkbox"
@@ -212,7 +208,6 @@ export function renderTeamSettings(container, {
             full_name: String(formData.get('full_name') || '').trim(),
             email: String(formData.get('email') || '').trim(),
             password: String(formData.get('password') || ''),
-            gender: String(formData.get('gender') || 'neutro'),
             role: String(formData.get('role') || 'user'),
             permissions: {
                 view: formData.get('permission_view') !== null,
@@ -233,7 +228,6 @@ export function renderTeamSettings(container, {
                 id: profileId,
                 full_name: card.querySelector('.team-input-full-name')?.value || '',
                 role: card.querySelector('.team-input-role')?.value || 'user',
-                gender: profiles.find((profile) => String(profile.id) === String(profileId))?.gender || 'neutro',
                 permissions: {
                     view: card.querySelector('.team-permission-view')?.checked === true,
                     edit: card.querySelector('.team-permission-edit')?.checked === true,

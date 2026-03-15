@@ -4,129 +4,20 @@ import { showConfirmModal } from './ConfirmModal.js';
 import { showNoticeModal } from './NoticeModal.js';
 import { escapeHtml } from '../utils/sanitize.js';
 
-const MOCK_CLIENTS = [
-    {
-        id: 'mock-1',
-        type: 'PF',
-        nome: 'Marina Albuquerque',
-        cpf: '142.553.890-00',
-        nomeFantasia: '',
-        cnpj: '',
-        nomeEmpresarial: '',
-        email: 'marina.albuquerque@agroserra.com',
-        telefone: '(91) 99112-3400',
-        logradouro: 'Av. Governador Jose Malcher',
-        numero: '1800',
-        bairro: 'Nazare',
-        cidade: 'Belem',
-        uf: 'PA',
-        cep: '66060-230',
-        documents: ['RG Marina Albuquerque.pdf', 'Contrato Social Agroserra.pdf'],
-        status: 'Em analise',
-        rg: '5532189 SSP/PA',
-        isMock: true
-    },
-    {
-        id: 'mock-2',
-        type: 'PJ',
-        nome: '',
-        cpf: '',
-        nomeFantasia: 'Mineracao Novo Horizonte',
-        cnpj: '42.881.114/0001-82',
-        nomeEmpresarial: 'Mineracao Novo Horizonte LTDA',
-        email: 'operacoes@novohorizonte.com.br',
-        telefone: '(93) 98812-1102',
-        logradouro: 'Rodovia PA-275',
-        numero: 'S/N',
-        bairro: 'Distrito Industrial',
-        cidade: 'Parauapebas',
-        uf: 'PA',
-        cep: '68515-000',
-        documents: ['CNPJ Novo Horizonte.pdf', 'Licenca Operacional.pdf'],
-        status: 'Ativo',
-        rg: 'Inscricao Estadual 158993201',
-        isMock: true
-    },
-    {
-        id: 'mock-3',
-        type: 'PF',
-        nome: 'Daniel Furtado',
-        cpf: '228.114.560-18',
-        nomeFantasia: '',
-        cnpj: '',
-        nomeEmpresarial: '',
-        email: 'daniel.furtado@serraviva.com',
-        telefone: '(94) 99231-1180',
-        logradouro: 'Rua dos Carajas',
-        numero: '421',
-        bairro: 'Cidade Nova',
-        cidade: 'Maraba',
-        uf: 'PA',
-        cep: '68501-530',
-        documents: ['CPF Daniel Furtado.pdf'],
-        status: 'Ativo',
-        rg: '7812551 PC/PA',
-        isMock: true
-    },
-    {
-        id: 'mock-4',
-        type: 'PJ',
-        nome: '',
-        cpf: '',
-        nomeFantasia: 'Geo Vale Ambiental',
-        cnpj: '18.220.934/0001-37',
-        nomeEmpresarial: 'Geo Vale Consultoria Ambiental S/A',
-        email: 'contato@geovaleambiental.com',
-        telefone: '(62) 98522-8741',
-        logradouro: 'Alameda dos Buritis',
-        numero: '99',
-        bairro: 'Setor Oeste',
-        cidade: 'Goiania',
-        uf: 'GO',
-        cep: '74115-060',
-        documents: ['Comprovante de Endereco.pdf', 'Apresentacao Institucional.pdf'],
-        status: 'Pendente',
-        rg: 'Inscricao Municipal 445210',
-        isMock: true
-    },
-    {
-        id: 'mock-5',
-        type: 'PF',
-        nome: 'Camila Nogueira',
-        cpf: '311.228.450-55',
-        nomeFantasia: '',
-        cnpj: '',
-        nomeEmpresarial: '',
-        email: 'camila.nogueira@bioflor.com',
-        telefone: '(98) 98145-7710',
-        logradouro: 'Rua das Andirobas',
-        numero: '55',
-        bairro: 'Renascenca',
-        cidade: 'Sao Luis',
-        uf: 'MA',
-        cep: '65075-120',
-        documents: ['RG Camila Nogueira.pdf', 'Carta de Apresentacao.pdf'],
-        status: 'Ativo',
-        rg: '9844112 SSP/MA',
-        isMock: true
-    }
-];
-
 export function renderClientList(container, actionsContainer, onEdit, onAdd, options = {}) {
     const clients = clientStore.getClients();
     const canEdit = options.canEdit !== false;
     const canDelete = options.canDelete === true;
-    const realClients = clients.map((client) => ({
+    const displayClients = clients.map((client) => ({
         ...client,
         status: 'Ativo',
-        rg: client.type === 'PF' ? 'Nao informado' : 'Nao informado',
+        rg: client.type === 'PF' ? 'Não informado' : 'Não informado',
         isMock: false
     }));
-    const displayClients = ensureMinimumClients(realClients);
 
     const state = {
         query: '',
-        selectedId: displayClients[0]?.id ?? null
+        selectedId: null
     };
     const uiState = {
         masterScrollTop: 0,
@@ -159,7 +50,7 @@ export function renderClientList(container, actionsContainer, onEdit, onAdd, opt
 
         const filteredClients = filterClients(displayClients, state.query);
         if (!filteredClients.some((client) => String(client.id) === String(state.selectedId))) {
-            state.selectedId = filteredClients[0]?.id ?? null;
+            state.selectedId = null;
         }
 
         const selectedClient = filteredClients.find((client) => String(client.id) === String(state.selectedId))
@@ -370,16 +261,6 @@ function renderClientEmptyState() {
             <p>Selecione um titular na lista ao lado para ver os detalhes.</p>
         </div>
     `;
-}
-
-function ensureMinimumClients(realClients) {
-    const items = [...realClients];
-    let mockIndex = 0;
-    while (items.length < 5 && mockIndex < MOCK_CLIENTS.length) {
-        items.push(MOCK_CLIENTS[mockIndex]);
-        mockIndex += 1;
-    }
-    return items;
 }
 
 function filterClients(clients, query) {

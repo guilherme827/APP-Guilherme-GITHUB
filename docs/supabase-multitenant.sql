@@ -141,6 +141,9 @@ as $$
     where id = auth.uid()
 $$;
 
+alter table public.processes
+    add column if not exists doc_size_bytes bigint default 0;
+
 alter table public.clients enable row level security;
 alter table public.processes enable row level security;
 

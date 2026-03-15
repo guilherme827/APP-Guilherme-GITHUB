@@ -4,8 +4,9 @@ export const FOLDER_OPTIONS = [
     { id: 'clientes', label: 'Titulares' },
     { id: 'processos', label: 'Processos' },
     { id: 'prazos', label: 'Prazos' },
-    { id: 'configuracoes', label: 'Configurações' },
-    { id: 'financeiro', label: 'Financeiro' }
+    { id: 'financeiro', label: 'Financeiro' },
+    { id: 'admin-panel', label: 'Painel Administrativo' },
+    { id: 'configuracoes', label: 'Configurações' }
 ];
 
 export const DEFAULT_PERMISSIONS = {
@@ -17,6 +18,9 @@ export const DEFAULT_PERMISSIONS = {
 export const ROLE_SUPER_ADMIN = 'super_admin';
 export const ROLE_ADMIN = 'admin';
 export const ROLE_USER = 'user';
+export const ORGANIZATION_MODULE_IDS = FOLDER_OPTIONS
+    .map((folder) => folder.id)
+    .filter((folderId) => folderId !== 'organizacoes');
 
 export function normalizePermissions(permissions) {
     return {
@@ -28,11 +32,18 @@ export function normalizePermissions(permissions) {
 
 export function normalizeFolderAccess(folderAccess) {
     if (!Array.isArray(folderAccess)) {
-        return FOLDER_OPTIONS
-            .map((folder) => folder.id)
-            .filter((folderId) => folderId !== 'organizacoes');
+        return [...ORGANIZATION_MODULE_IDS];
     }
     return [...new Set(folderAccess.filter(Boolean))];
+}
+
+export function normalizeOrganizationModules(enabledModules) {
+    if (!Array.isArray(enabledModules)) {
+        return [...ORGANIZATION_MODULE_IDS];
+    }
+    const normalized = [...new Set(enabledModules.filter(Boolean).map((item) => String(item).trim()))]
+        .filter((item) => ORGANIZATION_MODULE_IDS.includes(item));
+    return normalized.length > 0 ? normalized : [...ORGANIZATION_MODULE_IDS];
 }
 
 export function hasSuperAdminAccess(profile) {
@@ -47,11 +58,21 @@ export function hasAdminAccess(profile) {
     return hasSuperAdminAccess(profile) || hasOfficeAdminAccess(profile);
 }
 
-export function canViewSection(profile, sectionId) {
+export function canViewSection(profile, sectionId, enabledModules = null) {
     if (hasSuperAdminAccess(profile)) {
-        return sectionId === 'organizacoes' || sectionId === 'configuracoes';
+        return sectionId === 'organizacoes' || sectionId === 'configuracoes' || sectionId === 'admin-panel';
     }
-    if (hasOfficeAdminAccess(profile)) return sectionId !== 'organizacoes';
+    if (sectionId === 'organizacoes') {
+        return false;
+    }
+    if (sectionId === 'admin-panel') {
+        return hasOfficeAdminAccess(profile);
+    }
+    const organizationModules = normalizeOrganizationModules(enabledModules);
+    if (!organizationModules.includes(sectionId)) {
+        return false;
+    }
+    if (hasOfficeAdminAccess(profile)) return true;
     const permissions = normalizePermissions(profile?.permissions);
     const folders = normalizeFolderAccess(profile?.folder_access);
     return permissions.view && folders.includes(sectionId);
@@ -70,11 +91,5 @@ export function canDeleteContent(profile) {
 export function getWelcomeLabel(profile) {
     const fullName = String(profile?.full_name || profile?.email || '').trim();
     const firstName = fullName.split(/\s+/)[0] || 'usuário';
-    if (profile?.gender === 'feminino') {
-        return `Bem-vinda, ${firstName}`;
-    }
-    if (profile?.gender === 'masculino') {
-        return `Bem-vindo, ${firstName}`;
-    }
-    return `Bem-vindo(a), ${firstName}`;
+    return `Bem-vindo, ${firstName}`;
 }

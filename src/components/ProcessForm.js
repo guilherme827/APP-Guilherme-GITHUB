@@ -7,7 +7,7 @@ import { uploadDocumentFile } from '../utils/DocumentStorage.js';
 
 export function renderProcessForm(container, onSave, onCancel, editData = null, initialClientId = null) {
     let step = editData ? 3 : 1; // 1: Upload, 2: AI Reading, 3: Form
-    const hasPrimaryDocument = () => !!(formData.docBase64 || formData.docStoragePath);
+    const hasPrimaryDocument = () => !!(formData.docStoragePath);
     const getNormalizedPhase = (numeroTitulo) => (String(numeroTitulo || '').trim() ? 'Título' : 'Requerimento');
     const getInitialEventTypeForPhase = (phase) => (phase === 'Título' ? 'titulo' : 'protocolo');
     const getInitialEventDescriptionForPhase = (phase) => (phase === 'Título' ? 'Título inicial' : 'Protocolo inicial');
@@ -97,7 +97,6 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
         deadlines: [],
         events: [],
         // Attached document
-        docBase64: '',
         docStoragePath: '',
         docName: '',
         docType: ''
@@ -148,9 +147,9 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
         const processSelectedFile = async (file) => {
             if (!file) return;
             try {
-                const uploadedDoc = await uploadDocumentFile(file, 'processes/initial');
-                formData.docBase64 = uploadedDoc.base64 || '';
+                const uploadedDoc = await uploadDocumentFile(file, 'processos', formData.clientId || 'temp');
                 formData.docStoragePath = uploadedDoc.storagePath || '';
+                formData.docSize = uploadedDoc.size || 0;
                 formData.docName = uploadedDoc.name || file.name;
                 formData.docType = uploadedDoc.type || file.type || 'application/octet-stream';
                 step = 2;
@@ -265,11 +264,10 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
             date: event.date || '',
             isInitial: event.isInitial === true,
             usesProcessDocument: event.usesProcessDocument === true,
-            documents: (Array.isArray(event.documents) ? event.documents : []).filter((doc) => !!doc?.base64 || !!doc?.storagePath).map((doc, docIndex) => ({
+            documents: (Array.isArray(event.documents) ? event.documents : []).filter((doc) => !!doc?.storagePath).map((doc, docIndex) => ({
                 id: doc.id || `doc-${Date.now()}-${index}-${docIndex}`,
                 name: doc.name || 'documento',
                 type: doc.type || 'application/octet-stream',
-                base64: doc.base64 || '',
                 storagePath: doc.storagePath || ''
             }))
         }));
@@ -291,7 +289,6 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
                     id: `${event.id || 'event'}-process-doc`,
                     name: formData.docName || 'documento',
                     type: formData.docType || 'application/pdf',
-                    base64: formData.docBase64 || '',
                     storagePath: formData.docStoragePath || ''
                 }];
             }
@@ -802,17 +799,24 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
                 const idx = Number(input.dataset.index);
                 const file = input.files?.[0];
                 if (!file || !formData.events[idx]) return;
-                const doc = await uploadDocumentFile(file, 'processes/events');
-                const event = formData.events[idx];
-                if (isInitialEvent(event)) {
-                    formData.docBase64 = doc.base64 || '';
-                    formData.docStoragePath = doc.storagePath || '';
-                    formData.docName = doc.name;
-                    formData.docType = doc.type;
-                } else {
-                    event.documents = [doc];
+                
+                try {
+                    const doc = await uploadDocumentFile(file, 'eventos', formData.clientId || 'temp');
+                    const event = formData.events[idx];
+                    if (isInitialEvent(event)) {
+                        formData.docBase64 = '';
+                        formData.docStoragePath = doc.storagePath || '';
+                        formData.docSize = doc.size || 0;
+                        formData.docName = doc.name;
+                        formData.docType = doc.type;
+                    } else {
+                        event.documents = [doc];
+                    }
+                    render();
+                } catch (error) {
+                    console.error('Erro no upload do evento:', error);
+                    showNoticeModal('Falha no upload', 'Não foi possível enviar o arquivo do evento.');
                 }
-                render();
             };
         });
 
@@ -929,11 +933,12 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
             data.area = formatAreaHectares(data.area);
 
             // Merge document data
-            data.docBase64 = formData.docBase64;
-            data.docStoragePath = formData.docStoragePath;
-            data.docName = formData.docName;
-            data.docType = formData.docType;
-            data.events = formData.events;
+            data.docBase64 = formData.docBase64 || '';
+            data.docStoragePath = formData.docStoragePath || '';
+            data.docSize = formData.docSize || 0;
+            data.docName = formData.docName || '';
+            data.docType = formData.docType || '';
+            data.events = formData.events || [];
 
             onSave(data);
         };

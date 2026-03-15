@@ -243,8 +243,16 @@ function loadDashboardViewModule() {
     return loadComponentModule('dashboard-view', () => import('./components/DashboardView.js'));
 }
 
+function loadSettingsMenuViewModule() {
+    return loadComponentModule('settings-menu-view', () => import('./components/SettingsMenuView.js'));
+}
+
 function loadOrganizationAdminViewModule() {
     return loadComponentModule('organization-admin-view', () => import('./components/OrganizationAdminView.js'));
+}
+
+function loadAdminPanelViewModule() {
+    return loadComponentModule('admin-panel-view', () => import('./components/AdminPanelView.js'));
 }
 
 function authLog(...args) {
@@ -281,8 +289,6 @@ function getProfileDisplayName(profile, fallbackEmail = '') {
 
 function getHeaderGreeting(profile, fallbackEmail = '') {
     const firstName = getProfileDisplayName(profile, fallbackEmail).split(/\s+/)[0] || 'Usuário';
-    if (profile?.gender === 'feminino') return `Olá, ${firstName}!`;
-    if (profile?.gender === 'masculino') return `Olá, ${firstName}!`;
     return `Olá, ${firstName}!`;
 }
 
@@ -323,6 +329,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         alertLeadDays: getStoredAlertDays()
     });
     let teamProfiles = [];
+    let currentOrganizationId = null;
 
     const renderRoute = async () => {
         const renderId = ++state.renderSequence;
@@ -370,6 +377,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         setActiveOrganizationId(state.currentProfile?.organization_id || null);
+        currentOrganizationId = state.currentProfile?.organization_id || null;
+
+        if (hasSuperAdminAccess(state.currentProfile)) {
+            state.currentOrganization = null;
+            state.currentOrganizationLoaded = true;
+        } else if (e2eOverrides?.organization) {
+            state.currentOrganization = cloneE2EValue(e2eOverrides.organization, null);
+            state.currentOrganizationLoaded = true;
+        } else if (!currentOrganizationId) {
+            state.currentOrganization = null;
+            state.currentOrganizationLoaded = true;
+        } else if (currentOrganizationId && (!state.currentOrganizationLoaded || String(state.currentOrganization?.id || '') !== String(currentOrganizationId))) {
+            try {
+                state.currentOrganization = await profileService.getCurrentOrganization();
+                setActiveOrganizationId(currentOrganizationId, state.currentOrganization?.slug);
+            } catch (error) {
+                authLog('renderRoute:organization-fallback', error?.message || error);
+                state.currentOrganization = null;
+            }
+            state.currentOrganizationLoaded = true;
+        }
 
         let clientLoadResult;
         let processLoadResult;
@@ -422,8 +450,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         state.disposeHeaderMenu?.();
         const isAdmin = hasOfficeAdminAccess(state.currentProfile);
         const isSuperAdmin = hasSuperAdminAccess(state.currentProfile);
-        const visibleSections = ['organizacoes', 'painel', 'clientes', 'processos', 'prazos', 'financeiro', 'configuracoes']
-            .filter((sectionId) => canViewSection(state.currentProfile, sectionId));
+        const visibleSections = ['organizacoes', 'painel', 'clientes', 'processos', 'prazos', 'financeiro', 'admin-panel', 'configuracoes']
+            .filter((sectionId) => canViewSection(state.currentProfile, sectionId, state.currentOrganization?.enabled_modules));
         const displayName = getProfileDisplayName(state.currentProfile, session?.user?.email || '');
         const headerGreeting = getHeaderGreeting(state.currentProfile, session?.user?.email || '');
 
@@ -541,7 +569,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             viewActions.innerHTML = '';
             viewActions.style.display = '';
 
-            if (id !== 'equipe' && !canViewSection(state.currentProfile, id)) {
+            if (id !== 'equipe' && !canViewSection(state.currentProfile, id, state.currentOrganization?.enabled_modules)) {
                 authLog('navigate:blocked by permission', { id, role: state.currentProfile?.role });
                 showNoticeModal('Acesso restrito', 'Seu perfil não possui acesso a esta área.');
                 void navigate(hasSuperAdminAccess(state.currentProfile) ? 'organizacoes' : 'painel');
@@ -590,6 +618,38 @@ document.addEventListener('DOMContentLoaded', async () => {
                         } finally {
                             state.organizationCreateLoading = false;
                         }
+                    },
+                    onUpdateOrganization: async (payload) => {
+                        try {
+                            await profileService.updateOrganization(payload);
+                            await ensureOrganizationsLoaded(true);
+                            void navigate('organizacoes');
+                        } catch (error) {
+                            showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível atualizar a organização.');
+                            throw error;
+                        }
+                    },
+                    onCreateOrganizationUser: async (payload) => {
+                        try {
+                            await profileService.createOrganizationUser(payload);
+                            await ensureOrganizationsLoaded(true);
+                            showNoticeModal('Usuário criado', 'O novo usuário foi criado com sucesso.');
+                            void navigate('organizacoes');
+                        } catch (error) {
+                            showNoticeModal('Erro ao criar', error?.message || 'Não foi possível criar o usuário.');
+                            throw error;
+                        }
+                    },
+                    onUpdateOrganizationUser: async (payload) => {
+                        try {
+                            await profileService.updateOrganizationUser(payload);
+                            await ensureOrganizationsLoaded(true);
+                            showNoticeModal('Usuário atualizado', 'As informações do usuário foram atualizadas com sucesso.');
+                            void navigate('organizacoes');
+                        } catch (error) {
+                            showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível atualizar o usuário.');
+                            throw error;
+                        }
                     }
                 });
             } else if (id === 'painel') {
@@ -633,16 +693,31 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
                 renderViewLoading(contentArea, 'Carregando configuracoes...');
-                const { renderSettings } = await loadSettingsModule();
+                
+                const { renderSettingsMenuView } = await loadSettingsMenuViewModule();
                 if (navigationId !== navigationSequence || state.currentSection !== id) return;
-                renderSettings(contentArea, {
+
+                const handleRefreshTeam = async () => {
+                    try {
+                        await ensureTeamProfilesLoaded(true);
+                        void navigate('configuracoes');
+                    } catch (error) {
+                        showNoticeModal('Erro ao atualizar', error?.message || 'Nao foi possivel carregar a equipe.');
+                    }
+                };
+
+                renderSettingsMenuView(contentArea, {
                     profile: state.currentProfile,
                     email: session?.user?.email || '',
                     alertDays: state.alertLeadDays,
                     currentTheme: state.currentTheme,
                     isAdmin,
+                    teamProfiles,
+                    teamLoading: false,
+                    availableModules: state.currentOrganization?.enabled_modules || [],
                     onThemeChange: (themeId) => {
                         state.currentTheme = applyTheme(themeId);
+                        renderAuthenticatedApp(state.currentSession);
                     },
                     onProfileSave: async (payload) => {
                         try {
@@ -681,7 +756,74 @@ document.addEventListener('DOMContentLoaded', async () => {
                             showNoticeModal('Erro ao sair', error?.message || 'Não foi possível encerrar a sessão.');
                         }
                     },
-                    onOpenTeam: () => { void navigate('equipe'); }
+                    onRefreshTeam: handleRefreshTeam,
+                    onCreateTeamMember: async (payload) => {
+                        try {
+                            await profileService.createProfile(payload);
+                            showNoticeModal('Membro criado', 'O novo membro foi convidado com sucesso.');
+                            await handleRefreshTeam();
+                        } catch (error) {
+                            showNoticeModal('Erro ao criar', error?.message || 'Falha ao cadastrar membro.');
+                        }
+                    },
+                    onUpdateTeamMember: async (payload) => {
+                        try {
+                            await profileService.updateProfilePermissions(payload);
+                            showNoticeModal('Permissões atualizadas', 'As regras de acesso foram salvas.');
+                            await handleRefreshTeam();
+                        } catch (error) {
+                            showNoticeModal('Erro ao salvar', error?.message || 'Falha ao atualizar permissões.');
+                        }
+                    }
+                });
+            } else if (id === 'admin-panel') {
+                if (viewHeader) viewHeader.style.display = 'flex';
+                if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
+                if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
+                
+                if (!isAdmin) {
+                    void navigate('painel');
+                    return;
+                }
+
+                renderViewLoading(contentArea, 'Carregando painel administrativo...');
+                const { renderAdminPanelView } = await loadAdminPanelViewModule();
+                if (navigationId !== navigationSequence || state.currentSection !== id) return;
+
+                const handleRefreshTeam = async () => {
+                    try {
+                        await ensureTeamProfilesLoaded(true);
+                        void navigate('admin-panel');
+                    } catch (error) {
+                        showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível carregar a equipe.');
+                    }
+                };
+
+                renderAdminPanelView(contentArea, {
+                    profile: state.currentProfile,
+                    isAdmin,
+                    teamProfiles,
+                    teamLoading: false,
+                    availableModules: state.currentOrganization?.enabled_modules || [],
+                    onRefreshTeam: handleRefreshTeam,
+                    onCreateTeamMember: async (payload) => {
+                        try {
+                            await profileService.createProfile(payload);
+                            showNoticeModal('Membro criado', 'O novo membro foi convidado com sucesso.');
+                            await handleRefreshTeam();
+                        } catch (error) {
+                            showNoticeModal('Erro ao criar', error?.message || 'Falha ao cadastrar membro.');
+                        }
+                    },
+                    onUpdateTeamMember: async (payload) => {
+                        try {
+                            await profileService.updateProfilePermissions(payload);
+                            showNoticeModal('Permissões atualizadas', 'As regras de acesso foram salvas.');
+                            await handleRefreshTeam();
+                        } catch (error) {
+                            showNoticeModal('Erro ao salvar', error?.message || 'Falha ao atualizar permissões.');
+                        }
+                    }
                 });
             } else if (id === 'financeiro') {
                 if (viewHeader) viewHeader.style.display = 'flex';
@@ -702,6 +844,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     void navigate(hasSuperAdminAccess(state.currentProfile) ? 'organizacoes' : 'painel');
                     return;
                 }
+                if (!canViewSection(state.currentProfile, 'configuracoes', state.currentOrganization?.enabled_modules)) {
+                    void navigate(hasSuperAdminAccess(state.currentProfile) ? 'organizacoes' : 'painel');
+                    return;
+                }
                 renderViewLoading(contentArea, 'Carregando equipe...');
                 try {
                     await ensureTeamProfilesLoaded();
@@ -712,6 +858,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (navigationId !== navigationSequence || state.currentSection !== id) return;
                 renderTeamSettings(contentArea, {
                     currentProfile: state.currentProfile,
+                    availableModules: state.currentOrganization?.enabled_modules || null,
                     profiles: teamProfiles,
                     loading: false,
                     createLoading: state.teamCreateLoading,
@@ -791,7 +938,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             actionsContainer.innerHTML = '';
 
             const onNavigate = {
-                toProcessList: () => renderList(null, null),
+                toProcessList: () => renderList(clientId, projectId),
                 toClient: () => renderList(clientId, null),
                 toProject: projectId ? () => renderList(clientId, projectId) : null,
                 toEdit: (pid) => showEditProcess(container, actionsContainer, pid, () => showProcessDetails(container, actionsContainer, pid, clientId, projectId, renderList))
@@ -830,8 +977,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             actionsContainer.innerHTML = '';
             renderProcessForm(container, async (data) => {
                 try {
-                    await processStore.addProcess(data);
-                    onComplete();
+                    const createdProcess = await processStore.addProcess(data);
+                    onComplete(createdProcess?.clientId || null, createdProcess?.projectId || null);
                 } catch (error) {
                     showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível salvar o processo.');
                 }
@@ -893,8 +1040,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         initDock(navigate);
         const defaultSection = ['organizacoes', 'painel', 'clientes', 'processos', 'prazos', 'configuracoes']
-            .find((sectionId) => canViewSection(state.currentProfile, sectionId)) || 'painel';
-        const targetSection = canViewSection(state.currentProfile, state.currentSection) ? state.currentSection : defaultSection;
+            .find((sectionId) => canViewSection(state.currentProfile, sectionId, state.currentOrganization?.enabled_modules)) || 'painel';
+        const targetSection = canViewSection(state.currentProfile, state.currentSection, state.currentOrganization?.enabled_modules)
+            ? state.currentSection
+            : defaultSection;
         authLog('renderAuthenticatedApp:initial-section', { currentSection: state.currentSection, defaultSection, targetSection });
         void navigate(targetSection);
         state.hasRenderedProtectedApp = true;
@@ -932,6 +1081,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             state.teamProfilesLoaded = false;
             state.organizations = [];
             state.organizationsLoaded = false;
+            state.currentOrganization = null;
+            state.currentOrganizationLoaded = false;
             clientStore.reset();
             processStore.reset();
             resetActiveOrganizationId();

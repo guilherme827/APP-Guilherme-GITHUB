@@ -101,6 +101,7 @@ export function mapProcessRowToModel(row) {
         events: normalizeArray(row.events),
         docBase64: row.doc_base64 || '',
         docStoragePath: row.doc_storage_path || '',
+        docSize: row.doc_size_bytes || 0,
         docName: row.doc_name || '',
         docType: row.doc_type || ''
     };
@@ -126,9 +127,16 @@ export function mapProcessModelToRow(process, resolvedProjectName = '') {
         data_validade: process.dataValidade || null,
         data_outorga: process.dataOutorga || null,
         deadlines: normalizeArray(process.deadlines),
-        events: normalizeArray(process.events),
-        doc_base64: process.docBase64 || '',
+        events: normalizeArray(process.events).map(event => ({
+            ...event,
+            documents: normalizeArray(event.documents).map(doc => ({
+                ...doc,
+                base64: '' // Força a supressão do base64 em anexos de eventos.
+            }))
+        })),
+        doc_base64: '', // Força a supressão do base64 para evitar blobs gigantes na tabela.
         doc_storage_path: process.docStoragePath || '',
+        doc_size_bytes: process.docSize || 0,
         doc_name: process.docName || '',
         doc_type: process.docType || ''
     };

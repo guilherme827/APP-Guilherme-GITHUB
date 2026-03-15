@@ -9,6 +9,8 @@ export function createAppRuntimeState({ currentTheme, alertLeadDays } = {}) {
         organizations: [],
         organizationsLoaded: false,
         organizationCreateLoading: false,
+        currentOrganization: null,
+        currentOrganizationLoaded: false,
         currentSection: 'painel',
         hasRenderedProtectedApp: false,
         isBootstrappingSession: true,

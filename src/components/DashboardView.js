@@ -395,8 +395,6 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
         return `
             <div class="clock-face clock-face--digital" data-clock-face="digital">
                 <p class="clock-digital-time"><span data-clock-hours></span><b>:</b><span data-clock-minutes></span></p>
-                <p class="clock-digital-date" data-clock-full-date></p>
-                <p class="clock-digital-weekday" data-clock-weekday></p>
             </div>
         `;
     };
@@ -443,18 +441,15 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
 
     const renderCalendarWidget = (widget) => {
         const now = new Date();
-        const monthLabel = now
-            .toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })
-            .replace('.', '')
-            .replace(/^./, (char) => char.toUpperCase());
-        const today = now.getDate();
         const year = now.getFullYear();
-        const month = now.getMonth();
         const monthForLabel = now.toLocaleDateString('pt-BR', { month: 'long' });
+        const monthLabel = monthForLabel.charAt(0).toUpperCase() + monthForLabel.slice(1);
+        const today = now.getDate();
+        const month = now.getMonth();
         const firstDay = new Date(year, month, 1);
         const firstWeekday = (firstDay.getDay() + 6) % 7;
         const daysInMonth = new Date(year, month + 1, 0).getDate();
-        const weekdayLabels = ['S', 'T', 'Q', 'Q', 'S', 'S', 'D'];
+        const weekdayLabels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
         const cells = [];
 
         for (let index = 0; index < firstWeekday; index += 1) {
@@ -474,8 +469,12 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
             <article class="bento-widget bento-widget--summary bento-widget--calendar-panel" data-widget-id="${widget.id}">
                 ${renderWidgetOverlayActions(widget)}
                 <div class="calendar-panel">
-                    <div class="calendar-panel-head">
-                        <h3 class="calendar-panel-title">${monthLabel}</h3>
+                    <div class="calendar-panel-header">
+                        <div class="calendar-panel-title-group">
+                            <h3 class="calendar-panel-title">${monthLabel}</h3>
+                            <span class="calendar-panel-year">${year}</span>
+                        </div>
+                        <div class="calendar-panel-today-badge">Hoje, ${today}</div>
                     </div>
                     <div class="calendar-weekdays">
                         ${weekdayLabels.map((label) => `<span>${label}</span>`).join('')}
@@ -1176,6 +1175,8 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
             }, 700);
         };
 
+        let dragAnimationFrame = null;
+
         container.onpointermove = (event) => {
             if (!draggingWidgetId && pendingDragWidgetId === event.target.closest('[data-widget-id]')?.dataset.widgetId && pendingDragPointerId === event.pointerId) {
                 const distance = Math.hypot(event.clientX - dragOriginX, event.clientY - dragOriginY);
@@ -1190,25 +1191,40 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
                 return;
             }
             if (!draggingWidgetId || activePointerId !== event.pointerId) return;
-            const draggedCard = container.querySelector(`[data-widget-id="${draggingWidgetId}"]`);
-            const draggedWidget = getWidgetById(draggingWidgetId);
-            if (!draggedCard || !draggedWidget) return;
+            
+            const clientX = event.clientX;
+            const clientY = event.clientY;
 
-            const translateX = event.clientX - dragOriginX;
-            const translateY = event.clientY - dragOriginY;
-            draggedCard.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) scale(1.02)`;
+            if (dragAnimationFrame) cancelAnimationFrame(dragAnimationFrame);
+            
+            dragAnimationFrame = requestAnimationFrame(() => {
+                const draggedCard = container.querySelector(`[data-widget-id="${draggingWidgetId}"]`);
+                const draggedWidget = getWidgetById(draggingWidgetId);
+                if (!draggedCard || !draggedWidget) return;
 
-            clearDropTargets();
-            const slotIndex = resolveDropSlotIndex(event.clientX, event.clientY);
-            const span = getDashboardWidgetSpan(draggedWidget, currentGridColumns);
-            if (!Number.isFinite(slotIndex) || slotIndex < 1) {
-                dropTargetSlotIndex = null;
-                return;
-            }
-            const normalizedSlot = getDashboardPlacementForSlot(slotIndex, span.cols, currentGridColumns).slot;
-            dropTargetSlotIndex = normalizedSlot;
-            const targetSlot = container.querySelector(`[data-slot-index="${normalizedSlot}"]`);
-            targetSlot?.classList.add('is-drop-target');
+                const translateX = clientX - dragOriginX;
+                const translateY = clientY - dragOriginY;
+                draggedCard.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) scale(1.02)`;
+
+                const slotIndex = resolveDropSlotIndex(clientX, clientY);
+                if (!Number.isFinite(slotIndex) || slotIndex < 1) {
+                    if (dropTargetSlotIndex !== null) {
+                        clearDropTargets();
+                        dropTargetSlotIndex = null;
+                    }
+                    return;
+                }
+                
+                const span = getDashboardWidgetSpan(draggedWidget, currentGridColumns);
+                const normalizedSlot = getDashboardPlacementForSlot(slotIndex, span.cols, currentGridColumns).slot;
+                
+                if (dropTargetSlotIndex !== normalizedSlot) {
+                    clearDropTargets();
+                    dropTargetSlotIndex = normalizedSlot;
+                    const targetSlot = container.querySelector(`[data-slot-index="${normalizedSlot}"]`);
+                    if (targetSlot) targetSlot.classList.add('is-drop-target');
+                }
+            });
         };
 
         container.onpointerup = (event) => {

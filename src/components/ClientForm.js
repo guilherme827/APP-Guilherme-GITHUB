@@ -114,7 +114,7 @@ export function renderClientForm(container, onSave, onCancel, editData = null) {
                                             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
                                         </div>
                                         <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                            <p class="font-black" style="font-size: 0.8rem;">${escapeHtml(f)}</p>
+                                            <p class="font-black" style="font-size: 0.8rem;">${escapeHtml(typeof f === 'string' ? f : f.name)}</p>
                                             <p class="label-tech" style="font-size: 8px;">DOCUMENTO</p>
                                         </div>
                                     </div>
@@ -214,10 +214,28 @@ export function renderClientForm(container, onSave, onCancel, editData = null) {
         const fileInput = container.querySelector('#file-input');
         uploadZone.onclick = () => fileInput.click();
         
-        fileInput.onchange = (e) => {
-            const files = Array.from(e.target.files).map(f => f.name);
-            uploadedFiles = [...uploadedFiles, ...files];
-            refresh();
+        fileInput.onchange = async (e) => {
+            const files = Array.from(e.target.files);
+            const statusLabel = uploadZone.querySelector('.label-tech');
+            const originalText = statusLabel.textContent;
+            
+            statusLabel.textContent = 'CARREGANDO ARQUIVOS...';
+            statusLabel.style.color = 'var(--primary)';
+            
+            try {
+                const { uploadDocumentFile } = await import('../utils/DocumentStorage.js');
+                for (const file of files) {
+                    const result = await uploadDocumentFile(file, 'titulares', editData?.id || 'temp');
+                    uploadedFiles.push(result); // Agora salva o objeto completo {name, path, size...}
+                }
+                refresh();
+            } catch (error) {
+                console.error('Erro no upload:', error);
+                showNoticeModal('Falha no upload', 'Não foi possível enviar os arquivos para o servidor.');
+            } finally {
+                statusLabel.textContent = originalText;
+                statusLabel.style.color = '';
+            }
         };
 
         container.querySelectorAll('.btn-delete-file').forEach(btn => {
@@ -234,7 +252,7 @@ export function renderClientForm(container, onSave, onCancel, editData = null) {
             const formData = new FormData(form);
             const data = Object.fromEntries(formData.entries());
             data.type = clientType;
-            data.documents = uploadedFiles;
+            data.documents = uploadedFiles; // Lista de objetos de documentos
             
             try {
                 onSave(data);

@@ -93,6 +93,7 @@ function sanitizeMemberPayload(payload = {}) {
     return {
         full_name: String(payload.full_name || '').trim(),
         email: String(payload.email || '').trim().toLowerCase(),
+        cpf: String(payload.cpf || '').trim(),
         password: String(payload.password || ''),
         gender: String(payload.gender || '').trim() || 'neutro',
         role: String(payload.role || 'user').trim() === 'admin' ? 'admin' : 'user',
@@ -149,6 +150,7 @@ async function handlePost(req, res, env) {
         email_confirm: true,
         user_metadata: {
             full_name: payload.full_name,
+            cpf: payload.cpf,
             gender: payload.gender,
             role: payload.role,
             organization_id: auth.adminProfile.organization_id
@@ -166,6 +168,7 @@ async function handlePost(req, res, env) {
             id: createdUserData.user.id,
             email: payload.email,
             full_name: payload.full_name,
+            cpf: payload.cpf,
             gender: payload.gender,
             role: payload.role,
             organization_id: auth.adminProfile.organization_id,
@@ -208,6 +211,7 @@ async function handlePatch(req, res, env) {
 
     const updatePayload = {
         full_name: payload.full_name,
+        cpf: payload.cpf,
         gender: payload.gender,
         role: payload.role,
         permissions: payload.permissions,

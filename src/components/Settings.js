@@ -47,14 +47,6 @@ export function renderSettings(container, options = {}) {
                             <span class="label-tech">Nome completo</span>
                             <input type="text" name="full_name" value="${safeName}" required />
                         </label>
-                        <label class="settings-field">
-                            <span class="label-tech">Tratamento</span>
-                            <select name="gender">
-                                <option value="neutro" ${profile?.gender === 'neutro' ? 'selected' : ''}>Colaborador(a)</option>
-                                <option value="masculino" ${profile?.gender === 'masculino' ? 'selected' : ''}>Colaborador</option>
-                                <option value="feminino" ${profile?.gender === 'feminino' ? 'selected' : ''}>Colaboradora</option>
-                            </select>
-                        </label>
                         <button type="submit" class="btn-pill btn-black">Salvar perfil</button>
                     </form>
 
@@ -126,8 +118,7 @@ export function renderSettings(container, options = {}) {
         if (typeof onProfileSave !== 'function') return;
         const formData = new FormData(event.currentTarget);
         await onProfileSave({
-            full_name: String(formData.get('full_name') || '').trim(),
-            gender: String(formData.get('gender') || 'neutro')
+            full_name: String(formData.get('full_name') || '').trim()
         });
     });
 

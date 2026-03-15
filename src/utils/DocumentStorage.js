@@ -1,30 +1,41 @@
-function fileToBase64(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (event) => resolve(event.target.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-    });
-}
+import { supabaseStorage } from './SupabaseStorage.js';
+import { getActiveOrganizationSlug } from '../app/organizationContext.js';
 
-export async function uploadDocumentFile(file) {
-    const docBase = {
-        id: `doc-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        name: file?.name || 'documento',
-        type: file?.type || 'application/octet-stream'
-    };
+/**
+ * Utilitário de ponte para gerenciar documentos.
+ * Migrado de Base64 para Supabase Storage.
+ */
 
-    if (!file) return { ...docBase, base64: '', storagePath: '' };
+export async function uploadDocumentFile(file, category = 'geral', itemId = 'temp') {
+    if (!file) return { id: null, name: 'documento', type: 'application/octet-stream', size: 0, storagePath: '', base64: '' };
 
-    const base64 = await fileToBase64(file);
-    return {
-        ...docBase,
-        base64,
-        storagePath: ''
-    };
+    const organizationSlug = getActiveOrganizationSlug() || 'default';
+    
+    try {
+        const result = await supabaseStorage.uploadFile(file, {
+            organizationSlug,
+            category,
+            itemId
+        });
+
+        return {
+            id: `doc-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            name: result.name,
+            type: result.type,
+            size: result.size,
+            storagePath: result.path,
+            base64: '' // Base64 depreciado
+        };
+    } catch (error) {
+        console.error('Falha no uploadDocumentFile:', error);
+        throw error;
+    }
 }
 
 export async function getDocumentAccessUrl(doc) {
     if (!doc) return null;
+    if (doc.storagePath) {
+        return await supabaseStorage.getPublicUrl(doc.storagePath);
+    }
     return doc.base64 || null;
 }
