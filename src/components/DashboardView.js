@@ -713,6 +713,10 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
                 <div class="glass-card" style="padding: 1.2rem;">
                     <p class="label-tech" style="color: var(--rose-500);">ERRO NO PAINEL</p>
                     <p style="margin-top: 0.5rem; color: var(--slate-600);">Nao foi possivel renderizar os widgets.</p>
+                    <div style="margin-top: 1rem; padding: 1rem; background: #fee2e2; border-radius: 8px; color: #991b1b; font-family: monospace; font-size: 0.85rem; overflow-x: auto;">
+                        <strong>${escapeHtml(error?.message || 'Erro Desconhecido')}</strong><br/>
+                        ${escapeHtml(String(error?.stack || '')).replace(/\\n/g, '<br/>')}
+                    </div>
                 </div>
             `;
         }
