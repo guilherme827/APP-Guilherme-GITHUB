@@ -118,42 +118,47 @@ export function renderTeamSettings(container, {
                                     <p class="font-black" style="font-size: 1rem;">${escapeHtml(profile.full_name || 'Sem nome')}</p>
                                     <p class="label-tech" style="margin-top: 0.35rem; text-transform: lowercase;">${escapeHtml(profile.email || '-')}</p>
                                 </div>
-                                <div style="text-align: right;">
+                                <div style="display: flex; align-items: center; gap: 0.75rem;">
                                     <span class="label-tech" style="display: inline-flex; padding: 0.35rem 0.6rem; border-radius: 9999px; background: ${profile.role === 'admin' ? 'rgba(59,130,246,0.14)' : 'rgba(16,185,129,0.14)'}; color: ${profile.role === 'admin' ? 'var(--blue-500)' : 'var(--primary)'};">${escapeHtml(profile.role === 'admin' ? 'Administrador' : 'Colaborador')}</span>
+                                    <button type="button" class="btn-icon team-member-edit-toggle" style="background: transparent; border: none; cursor: pointer; color: var(--slate-500); padding: 0.2rem; border-radius: 50%; display: flex; align-items: center; justify-content: center;" title="Editar membro">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
+                                    </button>
                                 </div>
                             </div>
 
-                            <div style="margin-bottom: 1.2rem;">
-                                <label style="display: flex; flex-direction: column; gap: 0.35rem;">
-                                    <span class="label-tech">Nome do Colaborador</span>
-                                    <input type="text" class="team-input-full-name" value="${escapeHtml(profile.full_name || '')}" />
-                                </label>
-                            </div>
-
-                            <div style="margin-top: 0.5rem;">
-                                <p class="label-tech" style="margin-bottom: 0.85rem;">Acesso de Pastas (Menu Lateral)</p>
-                                <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.85rem;">
-                                    ${availableFolders.map((folder) => `
-                                        <label class="team-check-folder">
-                                            <input
-                                                type="checkbox"
-                                                class="team-folder-access"
-                                                value="${folder.id}"
-                                                ${getFolderAccess(profile.folder_access).includes(folder.id) || profile.role === 'admin' ? 'checked' : ''}
-                                            />
-                                            <div style="display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 0;">
-                                                <span class="team-folder-icon" style="color: var(--slate-500); display: flex; align-items: center;">
-                                                    ${FOLDER_ICONS[folder.id] || ''}
-                                                </span>
-                                                <span class="team-folder-name" title="${escapeHtml(folder.label)}">${escapeHtml(folder.label)}</span>
-                                            </div>
-                                        </label>
-                                    `).join('')}
+                            <div class="team-member-edit-form" style="display: none; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px dashed var(--slate-200);">
+                                <div style="margin-bottom: 1.2rem;">
+                                    <label style="display: flex; flex-direction: column; gap: 0.35rem;">
+                                        <span class="label-tech">Nome do Colaborador</span>
+                                        <input type="text" class="team-input-full-name" value="${escapeHtml(profile.full_name || '')}" />
+                                    </label>
                                 </div>
-                            </div>
 
-                            <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
-                                <button type="button" class="btn-pill btn-black team-member-save">Salvar alterações</button>
+                                <div style="margin-top: 0.5rem;">
+                                    <p class="label-tech" style="margin-bottom: 0.85rem;">Acesso de Pastas (Menu Lateral)</p>
+                                    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.85rem;">
+                                        ${availableFolders.map((folder) => `
+                                            <label class="team-check-folder folder-access-cell">
+                                                <input
+                                                    type="checkbox"
+                                                    class="team-folder-access"
+                                                    value="${folder.id}"
+                                                    ${getFolderAccess(profile.folder_access).includes(folder.id) || profile.role === 'admin' ? 'checked' : ''}
+                                                />
+                                                <div style="display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 0;">
+                                                    <span class="team-folder-icon" style="color: var(--slate-500); display: flex; align-items: center;">
+                                                        ${FOLDER_ICONS[folder.id] || ''}
+                                                    </span>
+                                                    <span class="team-folder-name" title="${escapeHtml(folder.label)}">${escapeHtml(folder.label)}</span>
+                                                </div>
+                                            </label>
+                                        `).join('')}
+                                    </div>
+                                </div>
+
+                                <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
+                                    <button type="button" class="btn-pill btn-black team-member-save">Salvar alterações</button>
+                                </div>
                             </div>
                         </article>
                     `).join('')}
@@ -298,6 +303,17 @@ export function renderTeamSettings(container, {
                 },
                 folder_access: [...card.querySelectorAll('.team-folder-access:checked')].map((input) => input.value)
             });
+        });
+    });
+
+    // Toggle de edição
+    container.querySelectorAll('.team-member-edit-toggle').forEach((button) => {
+        button.addEventListener('click', () => {
+            const card = button.closest('.team-member-card');
+            const form = card?.querySelector('.team-member-edit-form');
+            if (form) {
+                form.style.display = form.style.display === 'none' ? 'block' : 'none';
+            }
         });
     });
 }
