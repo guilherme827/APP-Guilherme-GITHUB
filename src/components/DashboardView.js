@@ -803,39 +803,8 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
         const anchorSlots = new Map(placementEntries.map(([widgetId, placement]) => [placement.slot, { widget: getWidgetById(widgetId), placement }]));
 
         if (actionHost) {
-            actionHost.innerHTML = `
-                <div class="bento-panel-actions">
-                    <div class="bento-add-wrap">
-                        <button type="button" class="bento-add-fab" data-action="toggle-add-widget-menu" aria-label="Adicionar widget" aria-haspopup="menu" aria-expanded="${addWidgetMenuOpen ? 'true' : 'false'}" aria-controls="dashboard-widget-type-menu">
-                            ${iconPlusWidget()}
-                            <span class="bento-add-tooltip">Adicionar Widget</span>
-                        </button>
-                        ${addWidgetMenuOpen ? `
-                            <div class="bento-add-menu" id="dashboard-widget-type-menu" role="menu" aria-label="Tipos de widget">
-                                ${widgetTypes.map((type) => `
-                                    <button type="button" class="bento-add-menu-item" data-action="create-widget" data-widget-type="${type.id}" role="menuitem">
-                                        <span class="bento-add-menu-item-title">${type.label}</span>
-                                        <span class="bento-add-menu-item-preview" aria-hidden="true">${renderWidgetTypePreview(type.id)}</span>
-                                        <span class="bento-add-menu-item-copy">${type.copy}</span>
-                                    </button>
-                                `).join('')}
-                                ${pendingWidgetType === 'pauta' || pendingWidgetType === 'lista' ? `
-                                    <div class="bento-add-inline-creator">
-                                        <label class="bento-add-inline-field">
-                                            <span>${pendingWidgetType === 'lista' ? 'Nome da lista' : 'Nome das tarefas'}</span>
-                                            <input type="text" data-field="new-pauta-title" placeholder="${pendingWidgetType === 'lista' ? 'Ex.: Ideias APP' : 'Ex.: Retornos urgentes'}" />
-                                        </label>
-                                        <div class="bento-add-inline-actions">
-                                            <button type="button" class="btn btn-primary" data-action="confirm-create-pauta">Criar ${pendingWidgetType === 'lista' ? 'lista' : 'tarefas'}</button>
-                                            <button type="button" class="btn btn-ghost" data-action="cancel-create-pauta">Cancelar</button>
-                                        </div>
-                                    </div>
-                                ` : ''}
-                            </div>
-                        ` : ''}
-                    </div>
-                </div>
-            `;
+            // O menu de tipos de widget é renderizado acoplado ao Ghost Card na grade
+            actionHost.innerHTML = '';
         }
 
         const cells = Array.from({ length: slotCount }, (_, index) => {
@@ -881,9 +850,59 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
             `;
         }).join('');
 
+        // Ghost Card: encontrar o primeiro slot vazio da primeira linha
+        const firstRowSlots = Array.from({ length: currentGridColumns }, (_, i) => i + 1);
+        const firstEmptyInRow1 = firstRowSlots.find((slot) => !currentGridState.occupied.has(slot)) ?? (lastOccupied + 1);
+        const ghostSlotIndex = firstEmptyInRow1;
+        const ghostRow = Math.floor((ghostSlotIndex - 1) / currentGridColumns) + 1;
+        const ghostCol = ((ghostSlotIndex - 1) % currentGridColumns) + 1;
+
+        const ghostCard = `
+            <div
+                class="bento-grid-slot bento-grid-slot--ghost"
+                style="grid-column:${ghostCol}; grid-row:${ghostRow};"
+            >
+                <button
+                    type="button"
+                    class="bento-ghost-card"
+                    data-action="toggle-add-widget-menu"
+                    aria-label="Adicionar widget"
+                    aria-haspopup="menu"
+                    aria-expanded="${addWidgetMenuOpen ? 'true' : 'false'}"
+                >
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    <span class="bento-ghost-label">Adicionar Widget</span>
+                </button>
+                ${addWidgetMenuOpen ? `
+                    <div class="bento-add-menu bento-ghost-menu" id="dashboard-widget-type-menu" role="menu" aria-label="Tipos de widget">
+                        ${widgetTypes.map((type) => `
+                            <button type="button" class="bento-add-menu-item" data-action="create-widget" data-widget-type="${type.id}" role="menuitem">
+                                <span class="bento-add-menu-item-title">${type.label}</span>
+                                <span class="bento-add-menu-item-preview" aria-hidden="true">${renderWidgetTypePreview(type.id)}</span>
+                                <span class="bento-add-menu-item-copy">${type.copy}</span>
+                            </button>
+                        `).join('')}
+                        ${pendingWidgetType === 'pauta' || pendingWidgetType === 'lista' ? `
+                            <div class="bento-add-inline-creator">
+                                <label class="bento-add-inline-field">
+                                    <span>${pendingWidgetType === 'lista' ? 'Nome da lista' : 'Nome das tarefas'}</span>
+                                    <input type="text" data-field="new-pauta-title" placeholder="${pendingWidgetType === 'lista' ? 'Ex.: Ideias APP' : 'Ex.: Retornos urgentes'}" />
+                                </label>
+                                <div class="bento-add-inline-actions">
+                                    <button type="button" class="btn btn-primary" data-action="confirm-create-pauta">Criar ${pendingWidgetType === 'lista' ? 'lista' : 'tarefas'}</button>
+                                    <button type="button" class="btn btn-ghost" data-action="cancel-create-pauta">Cancelar</button>
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+
         container.innerHTML = `
             <section class="bento-grid bento-grid--dashboard animate-fade-in" id="dashboard-bento-grid">
                 ${cells}
+                ${ghostCard}
             </section>
         `;
     };

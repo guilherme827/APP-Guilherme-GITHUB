@@ -442,6 +442,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderAuthenticatedApp(state.currentSession);
     };
 
+    let shellRenderedForSession = null;
+    const viewCache = new Map();
+
     const renderAuthenticatedApp = (session) => {
         authLog('renderAuthenticatedApp', {
             currentSection: state.currentSection,
@@ -455,27 +458,34 @@ document.addEventListener('DOMContentLoaded', async () => {
         const displayName = getProfileDisplayName(state.currentProfile, session?.user?.email || '');
         const headerGreeting = getHeaderGreeting(state.currentProfile, session?.user?.email || '');
 
-        app.innerHTML = `
-            <div class="dashboard-shell">
-                <div class="dashboard-glow dashboard-glow-a"></div>
-                <div class="dashboard-glow dashboard-glow-b"></div>
-                ${renderHeader({
-                    email: session?.user?.email || '',
-                    fullName: displayName,
-                    greeting: headerGreeting,
-                    role: state.currentProfile?.role || 'user',
-                    alertDays: state.alertLeadDays
-                })}
-                <main id="main-content">
-                    <div id="view-header" class="view-header">
-                        <div id="view-actions-left"></div>
-                        <div id="view-actions"></div>
-                    </div>
-                    <section id="content-area"></section>
-                </main>
-                ${renderDock({ isAdmin, visibleIds: visibleSections, fullName: displayName, email: session?.user?.email || '' })}
-            </div>
-        `;
+        if (shellRenderedForSession !== session?.user?.id) {
+            app.innerHTML = `
+                <div class="dashboard-shell">
+                    <div class="dashboard-glow dashboard-glow-a"></div>
+                    <div class="dashboard-glow dashboard-glow-b"></div>
+                    <div id="shell-header-container"></div>
+                    <main id="main-content" style="position: relative; flex: 1; display: flex; flex-direction: column; overflow: hidden; height: 100vh;"></main>
+                    <div id="shell-dock-container"></div>
+                </div>
+            `;
+            shellRenderedForSession = session?.user?.id;
+            viewCache.clear();
+        }
+
+        document.getElementById('shell-header-container').innerHTML = renderHeader({
+            email: session?.user?.email || '',
+            fullName: displayName,
+            greeting: headerGreeting,
+            role: state.currentProfile?.role || 'user',
+            alertDays: state.alertLeadDays
+        });
+        
+        document.getElementById('shell-dock-container').innerHTML = renderDock({ 
+            isAdmin, 
+            visibleIds: visibleSections, 
+            fullName: displayName, 
+            email: session?.user?.email || '' 
+        });
 
         state.disposeHeaderMenu = initHeaderMenu({
             profile: state.currentProfile,
@@ -518,10 +528,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
-        const contentArea = document.getElementById('content-area');
-        const viewActionsLeft = document.getElementById('view-actions-left');
-        const viewActions = document.getElementById('view-actions');
-        const viewHeader = document.getElementById('view-header');
+        // DOM selectors removed tracking individually inside viewCache
 
         const ensureTeamProfilesLoaded = async (force = false) => {
             if (!hasOfficeAdminAccess(state.currentProfile)) {
@@ -564,10 +571,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const navigate = async (id) => {
             const navigationId = ++navigationSequence;
             authLog('navigate:requested', { id, currentSection: state.currentSection });
-            contentArea.innerHTML = '';
-            if (viewActionsLeft) viewActionsLeft.innerHTML = '';
-            viewActions.innerHTML = '';
-            viewActions.style.display = '';
 
             if (id !== 'equipe' && !canViewSection(state.currentProfile, id, state.currentOrganization?.enabled_modules)) {
                 authLog('navigate:blocked by permission', { id, role: state.currentProfile?.role });
@@ -581,6 +584,78 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.querySelectorAll('.dock-item').forEach((item) => {
                 item.classList.toggle('active', item.dataset.id === id);
             });
+
+            const mainContent = document.getElementById('main-content');
+            if (!viewCache.has(id)) {
+                const container = document.createElement('div');
+                container.style.display = 'none';
+                container.style.flexDirection = 'column';
+                container.style.height = '100%';
+                container.style.width = '100%';
+                container.className = 'view-cache-container';
+                container.innerHTML = `
+                    <div class="view-header" style="flex-shrink: 0;">
+                        <div class="view-actions-left"></div>
+                        <div class="view-actions"></div>
+                    </div>
+                    <section class="content-area" style="flex: 1; overflow-y: auto; min-width: 0;"></section>
+                `;
+                mainContent.appendChild(container);
+
+                viewCache.set(id, {
+                    container,
+                    viewHeader: container.querySelector('.view-header'),
+                    viewActionsLeft: container.querySelector('.view-actions-left'),
+                    viewActions: container.querySelector('.view-actions'),
+                    contentArea: container.querySelector('.content-area'),
+                    initialized: false
+                });
+            }
+
+            // Oculta todas
+            viewCache.forEach(v => v.container.style.display = 'none');
+            
+            // Exibe a view atual
+            const currentView = viewCache.get(id);
+            currentView.container.style.display = 'flex';
+
+            const { viewHeader, viewActionsLeft, viewActions, contentArea, initialized } = currentView;
+
+            if (initialized) {
+                if (id === 'organizacoes') {
+                    viewHeader.style.display = 'flex';
+                    viewHeader.style.justifyContent = 'flex-end';
+                    viewHeader.classList.remove('view-header-floating-left');
+                } else if (id === 'painel') {
+                    viewHeader.style.display = 'flex';
+                    viewHeader.style.justifyContent = 'space-between';
+                    viewHeader.classList.add('view-header-floating-left');
+                } else if (['clientes', 'processos', 'prazos', 'financeiro', 'equipe', 'configuracoes', 'admin-panel'].includes(id)) {
+                    viewHeader.style.display = 'flex';
+                    viewHeader.style.justifyContent = 'flex-end';
+                    viewHeader.classList.remove('view-header-floating-left');
+                }
+
+                if (id === 'processos') {
+                    const clientSelect = contentArea.querySelector('select[name="clientId"]');
+                    if (clientSelect) {
+                        const currentVal = clientSelect.value;
+                        const escapeHtml = (t) => String(t).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[m]);
+                        
+                        clientSelect.innerHTML = `
+                            <option value="">Selecione um titular</option>
+                            ${clientStore.clients.map((c) => `
+                                <option value="${c.id}" ${String(c.id) === String(currentVal) ? 'selected' : ''}>
+                                    ${escapeHtml(c.full_name || c.name || '')}${c.document ? ` - ${escapeHtml(c.document)}` : ''}
+                                </option>
+                            `).join('')}
+                        `;
+                    }
+                }
+                return; // Pula o render se já carregou antes
+            }
+
+            currentView.initialized = true;
 
             if (id === 'organizacoes') {
                 if (viewHeader) viewHeader.style.display = 'flex';
@@ -717,7 +792,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     availableModules: state.currentOrganization?.enabled_modules || [],
                     onThemeChange: (themeId) => {
                         state.currentTheme = applyTheme(themeId);
-                        renderAuthenticatedApp(state.currentSession);
                     },
                     onProfileSave: async (payload) => {
                         try {

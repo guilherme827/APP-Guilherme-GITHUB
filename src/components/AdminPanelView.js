@@ -1,6 +1,9 @@
 
 import { escapeHtml } from '../utils/sanitize.js';
 import { renderTeamSettings } from './TeamSettings.js';
+import { renderTrashView } from './TrashView.js';
+import { trashStore } from '../utils/TrashStore.js';
+import { ActivityLogView } from './ActivityLogView.js';
 
 export function renderAdminPanelView(container, options = {}) {
     const {
@@ -22,7 +25,9 @@ export function renderAdminPanelView(container, options = {}) {
     const tabs = [
         { id: 'equipe', label: 'Gestão de Equipe', icon: usersIcon() },
         { id: 'ambiente', label: 'Status do Ambiente', icon: activityIcon() },
-        { id: 'organizacao', label: 'Dados da Organização', icon: buildingsIcon() }
+        { id: 'organizacao', label: 'Dados da Organização', icon: buildingsIcon() },
+        { id: 'lixeira', label: 'Lixeira', icon: trashIcon() },
+        { id: 'registro', label: 'Registro de Atividades', icon: historyIcon() }
     ];
 
     const render = () => {
@@ -57,36 +62,54 @@ export function renderAdminPanelView(container, options = {}) {
         renderActiveTab();
     };
 
+    const renderTeamTab = (target) => {
+        const teamContainer = document.createElement('div');
+        target.appendChild(teamContainer);
+        renderTeamSettings(teamContainer, {
+            currentProfile: profile,
+            availableModules,
+            profiles: teamProfiles,
+            loading: teamLoading,
+            createLoading: teamCreateLoading,
+            onRefresh: onRefreshTeam,
+            onCreateMember: onCreateTeamMember,
+            onUpdateMember: onUpdateTeamMember
+        });
+    };
+
     const renderActiveTab = () => {
         const contentArea = container.querySelector('#admin-content-area');
         if (!contentArea) return;
 
-        contentArea.innerHTML = '';
+        contentArea.innerHTML = ''; // Limpa
 
-        if (state.activeTab === 'equipe') {
-            const teamContainer = document.createElement('div');
-            contentArea.appendChild(teamContainer);
-            renderTeamSettings(teamContainer, {
-                currentProfile: profile,
-                availableModules,
-                profiles: teamProfiles,
-                loading: teamLoading,
-                createLoading: teamCreateLoading,
-                onRefresh: onRefreshTeam,
-                onCreateMember: onCreateTeamMember,
-                onUpdateMember: onUpdateTeamMember
-            });
-            return;
-        }
-
-        const wrapper = document.createElement('div');
-        wrapper.className = 'settings-detail-wrapper';
-        contentArea.appendChild(wrapper);
-
-        if (state.activeTab === 'ambiente') {
-            renderEnvironmentTab(wrapper);
-        } else if (state.activeTab === 'organizacao') {
-            renderOrganizationTab(wrapper);
+        switch (state.activeTab) {
+            case 'equipe':
+                renderTeamTab(contentArea);
+                break;
+            case 'ambiente':
+                const envWrapper = document.createElement('div');
+                envWrapper.className = 'settings-detail-wrapper';
+                contentArea.appendChild(envWrapper);
+                renderEnvironmentTab(envWrapper);
+                break;
+            case 'organizacao':
+                const orgWrapper = document.createElement('div');
+                orgWrapper.className = 'settings-detail-wrapper';
+                contentArea.appendChild(orgWrapper);
+                renderOrganizationTab(orgWrapper);
+                break;
+            case 'lixeira':
+                const trashWrapper = document.createElement('div');
+                trashWrapper.className = 'settings-detail-wrapper';
+                contentArea.appendChild(trashWrapper);
+                renderTrashView(trashWrapper, { trashStore });
+                break;
+            case 'registro':
+                contentArea.appendChild(ActivityLogView());
+                break;
+            default:
+                contentArea.innerHTML = '<p style="padding: 2rem; color: var(--slate-500);">Aba não encontrada.</p>';
         }
     };
 
@@ -199,3 +222,5 @@ function activityIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18
 function buildingsIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path><path d="M9 9h.01"></path><path d="M9 13h.01"></path><path d="M9 17h.01"></path><path d="M13 13h.01"></path><path d="M13 17h.01"></path></svg>`; }
 function shieldIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>`; }
 function databaseIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>`; }
+function trashIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>`; }
+function historyIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`; }

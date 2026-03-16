@@ -1,6 +1,8 @@
 import { supabase } from '../lib/supabaseClient.js';
 import { mapClientModelToRow, mapClientRowToModel } from './supabaseMappers.js';
 import { getActiveOrganizationId } from '../app/organizationContext.js';
+import { trashStore } from './TrashStore.js';
+import { activityLogger } from './ActivityLogger.js';
 
 function getSupabaseMessage(error, fallback) {
     return error?.message || fallback;
@@ -19,6 +21,16 @@ export class ClientStore {
 
     async hydrate() {
         const organizationId = getCurrentOrganizationId();
+
+        // Busca IDs de titulares que já estão na lixeira para excluí-los da lista normal
+        const { data: trashedData } = await supabase
+            .from('trash')
+            .select('item_id')
+            .eq('organization_id', organizationId)
+            .eq('item_type', 'titular');
+
+        const trashedIds = new Set((trashedData || []).map(r => String(r.item_id)));
+
         const { data, error } = await supabase
             .from('clients')
             .select('*')
@@ -29,9 +41,13 @@ export class ClientStore {
             throw new Error(getSupabaseMessage(error, 'Falha ao carregar titulares no Supabase.'));
         }
 
-        this.clients = (data || []).map(mapClientRowToModel);
+        // Filtra os que estão na lixeira
+        this.clients = (data || [])
+            .filter(row => !trashedIds.has(String(row.id)))
+            .map(mapClientRowToModel);
         this.isLoaded = true;
     }
+
 
     async load(force = false) {
         if (this.isLoaded && !force) return this.ready;
@@ -98,6 +114,16 @@ export class ClientStore {
 
         const created = mapClientRowToModel(data);
         this.clients.push(created);
+
+        // Registro de Atividade
+        const label = created.type === 'PF' ? (created.nome || 'Titular') : (created.nomeFantasia || created.nomeEmpresarial || 'Empresa');
+        activityLogger.logAction({
+            action_type: 'CREATE',
+            entity_type: 'TITULAR',
+            entity_id: created.id,
+            entity_label: label
+        });
+
         return created;
     }
 
@@ -122,10 +148,21 @@ export class ClientStore {
 
         const updated = mapClientRowToModel(data);
         this.clients = this.clients.map((client) => (String(client.id) === String(id) ? updated : client));
+
+        // Registro de Atividade
+        const label = updated.type === 'PF' ? (updated.nome || 'Titular') : (updated.nomeFantasia || updated.nomeEmpresarial || 'Empresa');
+        activityLogger.logAction({
+            action_type: 'UPDATE',
+            entity_type: 'TITULAR',
+            entity_id: updated.id,
+            entity_label: label
+        });
+
         return updated;
     }
 
     async deleteClient(id) {
+        // Verifica processos vinculados antes de qualquer ação
         const { count, error: countError } = await supabase
             .from('processes')
             .select('id', { count: 'exact', head: true })
@@ -140,17 +177,39 @@ export class ClientStore {
             throw new Error('Não é possível excluir: titular possui processos ou extratos vinculados.');
         }
 
-        const { error } = await supabase
-            .from('clients')
-            .delete()
-            .eq('id', id)
-            .eq('organization_id', getCurrentOrganizationId());
+        // Captura o objeto completo do titular para arquivar na lixeira
+        const client = this.clients.find(c => String(c.id) === String(id));
+        if (!client) throw new Error('Titular não encontrado.');
 
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Não foi possível excluir o titular.'));
-        }
+        // Coleta os storagePaths de documentos do titular
+        const storagePaths = (client.documents || [])
+            .map(doc => doc.storagePath || doc.storage_path)
+            .filter(p => p && typeof p === 'string' && p.length > 0);
 
-        this.clients = this.clients.filter((client) => String(client.id) !== String(id));
+        const label = client.type === 'PF'
+            ? (client.nome || 'Titular sem nome')
+            : (client.nomeFantasia || client.nomeEmpresarial || 'Empresa sem nome');
+
+        // Envia para a lixeira (soft delete — o registro real permanece no banco)
+        await trashStore.sendToTrash({
+            item_type: 'titular',
+            item_id: id,
+            item_label: label,
+            item_data: client,
+            storage_paths: storagePaths
+        });
+
+        // Remove do array local imediatamente (some da tela)
+        this.clients = this.clients.filter((c) => String(c.id) !== String(id));
+
+        // Registro de Atividade
+        activityLogger.logAction({
+            action_type: 'SOFT_DELETE',
+            entity_type: 'TITULAR',
+            entity_id: id,
+            entity_label: label
+        });
+
         return true;
     }
 }

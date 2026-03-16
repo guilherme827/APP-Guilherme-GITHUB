@@ -11,7 +11,6 @@ export function renderClientList(container, actionsContainer, onEdit, onAdd, opt
     const displayClients = clients.map((client) => ({
         ...client,
         status: 'Ativo',
-        rg: client.type === 'PF' ? 'Não informado' : 'Não informado',
         isMock: false
     }));
 
@@ -58,7 +57,7 @@ export function renderClientList(container, actionsContainer, onEdit, onAdd, opt
             || null;
 
         container.innerHTML = `
-            <div class="client-master-detail bounded-scroll-layout">
+            <div class="client-master-detail bounded-scroll-layout" style="width: 100%;">
                 <aside class="client-master-panel">
                     <div class="client-master-header">
                         <label class="client-master-search">
@@ -142,23 +141,59 @@ export function renderClientList(container, actionsContainer, onEdit, onAdd, opt
                 return;
             }
             if (!canDelete) {
-                showNoticeModal('Acesso restrito', 'Seu perfil nao possui permissao para desativar titulares.');
+                showNoticeModal('Acesso restrito', 'Seu perfil nao possui permissao para excluir titulares.');
                 return;
             }
 
             showConfirmModal(
-                'Desativar titular',
-                `Deseja realmente remover o titular "${getClientName(selectedClient)}"?`,
+                'Excluir titular',
+                `Deseja realmente excluir o titular "${getClientName(selectedClient)}"?`,
                 async () => {
                     try {
                         await clientStore.deleteClient(Number(selectedClient.id));
                         state.selectedId = null;
                         render();
                     } catch (error) {
-                        showNoticeModal('Nao foi possivel desativar', error?.message || 'Falha ao remover o titular.');
+                        showNoticeModal('Nao foi possivel excluir', error?.message || 'Falha ao remover o titular.');
                     }
                 }
             );
+        });
+
+        container.querySelectorAll('.btn-copy-inline').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const val = btn.dataset.copyVal;
+                if (!val) return;
+                navigator.clipboard.writeText(val);
+                
+                const originalHTML = btn.innerHTML;
+                btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary)"><polyline points="20 6 9 17 4 12"/></svg>`;
+                btn.classList.add('copied');
+                
+                setTimeout(() => {
+                    btn.innerHTML = originalHTML;
+                    btn.classList.remove('copied');
+                }, 1500);
+            });
+        });
+
+        // Add hover effect for download button manually due to inline styling limitations
+        container.querySelectorAll('.btn-download-inline').forEach(btn => {
+            btn.addEventListener('mouseenter', () => {
+                btn.style.backgroundColor = 'var(--slate-200)';
+                btn.style.color = 'var(--primary)';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.backgroundColor = 'transparent';
+                btn.style.color = 'var(--slate-400)';
+            });
+            btn.addEventListener('click', () => {
+                const docName = btn.dataset.downloadVal;
+                // Since this is a UI prototype, we just trigger the notice modal.
+                import('./NoticeModal.js').then(({ showNoticeModal }) => {
+                    showNoticeModal('Download Iniciado', `Simulando o download do arquivo: ${docName}`);
+                });
+            });
         });
     };
 
@@ -182,12 +217,10 @@ function renderClientListItem(client, selectedId) {
 function renderClientDetail(client, options = {}) {
     const linkedProcesses = processStore.processes.filter((process) => String(process.clientId) === String(client.id));
     const infoCards = [
-        { label: client.type === 'PF' ? 'CPF' : 'CNPJ', value: getClientDocument(client), tone: 'cyan' },
-        { label: 'RG / INSCRICAO', value: client.rg || 'Nao informado', tone: 'blue' },
-        { label: 'E-MAIL', value: client.email || 'Nao informado', tone: 'emerald' },
-        { label: 'TELEFONE', value: client.telefone || 'Nao informado', tone: 'cyan' },
-        { label: 'ENDERECO', value: formatAddress(client), tone: 'blue' },
-        { label: 'STATUS', value: client.status || 'Ativo', tone: 'emerald' }
+        { label: client.type === 'PF' ? 'CPF' : 'CNPJ', value: getClientDocument(client), tone: 'cyan', canCopy: true },
+        { label: 'E-MAIL', value: client.email || 'Nao informado', tone: 'emerald', canCopy: !!client.email },
+        { label: 'TELEFONE', value: client.telefone || 'Nao informado', tone: 'cyan', canCopy: !!client.telefone },
+        { label: 'ENDERECO', value: formatAddress(client), tone: 'blue', canCopy: formatAddress(client) !== 'Nao informado' }
     ];
 
     return `
@@ -196,24 +229,49 @@ function renderClientDetail(client, options = {}) {
                 <header class="client-detail-header">
                     <div>
                         <p class="label-tech">Titular selecionado</p>
-                        <h2 class="client-detail-title">${escapeHtml(getClientName(client))}</h2>
-                        <p class="client-detail-subtitle">${escapeHtml(client.type === 'PJ' ? (client.nomeEmpresarial || 'Pessoa Juridica') : 'Pessoa Fisica')}</p>
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <h2 class="client-detail-title">${escapeHtml(getClientName(client))}</h2>
+                            <button 
+                                type="button" 
+                                class="btn-copy-inline" 
+                                data-copy-val="${escapeAttribute(getClientName(client))}"
+                                title="Copiar Nome"
+                            >
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                     <div class="client-detail-actions">
                         ${options.canEdit !== false ? `<button type="button" class="btn-pill" data-detail-action="edit">Editar</button>` : ''}
                         <button type="button" class="btn-pill ${options.canDelete ? 'client-detail-danger' : ''}" data-detail-action="deactivate">
-                            Desativar
+                            Excluir
                         </button>
                     </div>
                 </header>
 
                 <div class="client-detail-grid">
                     ${infoCards.map((card) => `
-                        <article class="client-info-card">
+                        <article class="client-info-card" ${card.label === 'ENDERECO' ? 'style="grid-column: 1 / -1;"' : ''}>
                             <span class="client-info-icon client-info-icon-${card.tone}">${detailIcon(card.tone)}</span>
-                            <div>
-                                <p class="label-tech">${escapeHtml(card.label)}</p>
-                                <p class="client-info-value">${escapeHtml(card.value || 'Nao informado')}</p>
+                            <div style="flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; overflow: hidden;">
+                                <div style="flex: 1; overflow: hidden;">
+                                    <p class="label-tech">${escapeHtml(card.label)}</p>
+                                    <p class="client-info-value" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(card.value || 'Nao informado')}</p>
+                                </div>
+                                ${card.canCopy ? `
+                                    <button 
+                                        type="button" 
+                                        class="btn-copy-inline" 
+                                        data-copy-val="${escapeAttribute(card.value)}"
+                                        title="Copiar"
+                                    >
+                                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                                        </svg>
+                                    </button>
+                                ` : ''}
                             </div>
                         </article>
                     `).join('')}
@@ -226,7 +284,35 @@ function renderClientDetail(client, options = {}) {
                             <span>${client.documents?.length || 0}</span>
                         </div>
                         ${client.documents?.length
-                            ? `<div class="client-tag-list">${client.documents.map((doc) => `<span class="client-tag">${escapeHtml(doc)}</span>`).join('')}</div>`
+                            ? `
+                                <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1rem;">
+                                    ${client.documents.map((doc) => `
+                                        <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: var(--slate-50); padding: 0.75rem 1rem; border-radius: 12px; border: 1px solid var(--slate-200);">
+                                            <div style="display: flex; align-items: center; gap: 0.75rem; overflow: hidden;">
+                                                <div style="color: var(--slate-400);">
+                                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/>
+                                                    </svg>
+                                                </div>
+                                                <p class="font-bold" style="font-size: 0.85rem; color: var(--slate-700); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                                    ${escapeHtml(typeof doc === 'string' ? doc : doc.name || doc.fileName || 'Documento Sem Nome')}
+                                                </p>
+                                            </div>
+                                            <button 
+                                                type="button" 
+                                                class="btn-download-inline" 
+                                                data-download-val="${escapeAttribute(typeof doc === 'string' ? doc : doc.name || doc.fileName || 'documento_anexo')}"
+                                                title="Baixar Arquivo"
+                                                style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--slate-400); border-radius: 6px; display: flex; align-items: center; justify-content: center; transition: all 0.2s;"
+                                            >
+                                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `
                             : '<p class="client-section-copy">Nenhum documento anexado a este titular.</p>'}
                     </section>
 

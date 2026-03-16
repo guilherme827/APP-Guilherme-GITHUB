@@ -7,13 +7,11 @@ export function renderClientDetails(container, client, onBack) {
     
     const dataFields = isPF ? [
         { label: 'NOME COMPLETO', value: client.nome },
-        { label: 'CPF', value: client.cpf },
-        { label: 'QUALIFICAÇÃO', value: 'PESSOA FÍSICA' }
+        { label: 'CPF', value: client.cpf }
     ] : [
         { label: 'NOME FANTASIA', value: client.nomeFantasia },
         { label: 'CNPJ', value: client.cnpj },
-        { label: 'RAZÃO SOCIAL', value: client.nomeEmpresarial },
-        { label: 'QUALIFICAÇÃO', value: 'PESSOA JURÍDICA' }
+        { label: 'RAZÃO SOCIAL', value: client.nomeEmpresarial }
     ];
 
     const contactFields = [

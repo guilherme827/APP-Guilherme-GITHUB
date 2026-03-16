@@ -138,6 +138,22 @@ export function renderClientForm(container, onSave, onCancel, editData = null) {
                 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
                 .grid-address { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; }
                 .form-section { border-left: 2px solid var(--slate-200); padding-left: 2rem; }
+                .client-form-shell {
+                    max-height: 85vh;
+                    overflow-y: auto;
+                    scrollbar-width: thin;
+                    scrollbar-color: var(--slate-300) transparent;
+                }
+                .client-form-shell::-webkit-scrollbar {
+                    width: 6px;
+                }
+                .client-form-shell::-webkit-scrollbar-track {
+                    background: transparent;
+                }
+                .client-form-shell::-webkit-scrollbar-thumb {
+                    background-color: var(--slate-300);
+                    border-radius: 10px;
+                }
                 .client-form-shell .form-group label { display: block; margin-bottom: 0.75rem; }
                 .client-form-shell .field-shell {
                     background: var(--input-bg);

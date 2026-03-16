@@ -6,6 +6,9 @@ import {
     mapProcessRowToModel
 } from './supabaseMappers.js';
 import { getActiveOrganizationId } from '../app/organizationContext.js';
+import { trashStore } from './TrashStore.js';
+import { activityLogger } from './ActivityLogger.js';
+import { clientStore } from './ClientStore.js';
 
 function getSupabaseMessage(error, fallback) {
     return error?.message || fallback;
@@ -25,6 +28,16 @@ export class ProcessStore {
 
     async hydrate() {
         const organizationId = getCurrentOrganizationId();
+
+        // Busca IDs de processos que já estão na lixeira para excluí-los da lista normal
+        const { data: trashedData } = await supabase
+            .from('trash')
+            .select('item_id')
+            .eq('organization_id', organizationId)
+            .eq('item_type', 'processo');
+
+        const trashedIds = new Set((trashedData || []).map(r => String(r.item_id)));
+
         const { data, error } = await supabase
             .from('processes')
             .select('*')
@@ -35,7 +48,11 @@ export class ProcessStore {
             throw new Error(getSupabaseMessage(error, 'Falha ao carregar processos no Supabase.'));
         }
 
-        this.processes = (data || []).map(mapProcessRowToModel);
+        // Filtra os que estão na lixeira e converte pro modelo frontend
+        this.processes = (data || [])
+            .filter(row => !trashedIds.has(String(row.id)))
+            .map(mapProcessRowToModel);
+            
         this.rebuildProjects();
         this.sanitizeDeadlines();
         this.sanitizeExtractEvents();
@@ -350,6 +367,19 @@ export class ProcessStore {
         const created = mapProcessRowToModel(data);
         this.processes = [...this.processes, created];
         this.rebuildProjects();
+
+        // Registro de Atividade
+        const client = clientStore.clients.find(c => String(c.id) === String(created.clientId));
+        const clientName = client ? (client.type === 'PF' ? client.nome : client.nomeFantasia || client.nomeEmpresarial || 'Titular') : '';
+        const label = [clientName, created.numeroProcesso, created.tipo, created.municipio].filter(Boolean).join(' · ') || `Processo #${created.id}`;
+        
+        activityLogger.logAction({
+            action_type: 'CREATE',
+            entity_type: 'PROCESSO',
+            entity_id: created.id,
+            entity_label: label
+        });
+
         return created;
     }
 
@@ -411,6 +441,19 @@ export class ProcessStore {
         const updated = mapProcessRowToModel(data);
         this.processes = this.processes.map((process) => (String(process.id) === String(id) ? updated : process));
         this.rebuildProjects();
+
+        // Registro de Atividade
+        const client = clientStore.clients.find(c => String(c.id) === String(updated.clientId));
+        const clientName = client ? (client.type === 'PF' ? client.nome : client.nomeFantasia || client.nomeEmpresarial || 'Titular') : '';
+        const label = [clientName, updated.numeroProcesso, updated.tipo, updated.municipio].filter(Boolean).join(' · ') || `Processo #${updated.id}`;
+        
+        activityLogger.logAction({
+            action_type: 'UPDATE',
+            entity_type: 'PROCESSO',
+            entity_id: updated.id,
+            entity_label: label
+        });
+
         return true;
     }
 
@@ -461,19 +504,52 @@ export class ProcessStore {
     }
 
     async deleteProcess(id) {
-        const { error } = await supabase
-            .from('processes')
-            .delete()
-            .eq('id', id)
-            .eq('organization_id', getCurrentOrganizationId());
+        // Captura o objeto completo do processo para arquivar na lixeira
+        const process = this.processes.find(p => String(p.id) === String(id));
+        if (!process) throw new Error('Processo não encontrado.');
 
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Não foi possível excluir o processo.'));
-        }
+        // Coleta todos os storagePaths: documento principal + documentos de eventos
+        const storagePaths = [];
+        if (process.docStoragePath) storagePaths.push(process.docStoragePath);
+        (process.events || []).forEach(event => {
+            (event.documents || []).forEach(doc => {
+                if (doc.storagePath && typeof doc.storagePath === 'string' && doc.storagePath.length > 0) {
+                    storagePaths.push(doc.storagePath);
+                }
+            });
+        });
 
-        const changed = this.processes.some((process) => String(process.id) === String(id));
-        this.processes = this.processes.filter((process) => String(process.id) !== String(id));
+        const client = clientStore.clients.find(c => String(c.id) === String(process.clientId));
+        const clientName = client ? (client.type === 'PF' ? client.nome : client.nomeFantasia || client.nomeEmpresarial || 'Titular') : '';
+        const label = [
+            clientName,
+            process.numeroProcesso || '',
+            process.tipo || '',
+            process.municipio || ''
+        ].filter(Boolean).join(' · ') || `Processo #${id}`;
+
+        // Envia para a lixeira (soft delete — o registro real permanece no banco)
+        await trashStore.sendToTrash({
+            item_type: 'processo',
+            item_id: id,
+            item_label: label,
+            item_data: process,
+            storage_paths: storagePaths
+        });
+
+        // Remove do array local imediatamente (some da tela)
+        const changed = this.processes.some((p) => String(p.id) === String(id));
+        this.processes = this.processes.filter((p) => String(p.id) !== String(id));
         this.rebuildProjects();
+
+        // Registro de atividade
+        activityLogger.logAction({
+            action_type: 'SOFT_DELETE',
+            entity_type: 'PROCESSO',
+            entity_id: id,
+            entity_label: label
+        });
+
         return changed;
     }
 }

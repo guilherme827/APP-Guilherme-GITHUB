@@ -198,42 +198,132 @@ export const profileService = {
     },
 
     async getStorageUsage(organizationId) {
-        // Se for Super Admin sem org_id fixo, tenta somar tudo (opcional) ou focar na ativa
         const targetOrgId = organizationId || window.__APP_CONTROL_ACTIVE_ORG_ID__;
-        if (!targetOrgId) return { totalBytes: 0, fileCount: 0 };
-        
+        if (!targetOrgId) return { totalBytes: 0, fileCount: 0, breakdown: [] };
+
         console.log('[ProfileService] Calculando uso para Org:', targetOrgId);
-        
-        try {
-            const { data: procData, error: procError } = await supabase
-                .from('processes')
-                .select('doc_size_bytes')
-                .eq('organization_id', targetOrgId);
-                
-            if (procError) throw procError;
-            
-            const { data: clientData, error: clientError } = await supabase
-                .from('clients')
-                .select('documents')
-                .eq('organization_id', targetOrgId);
-                
-            if (clientError) throw clientError;
-            
-            let totalBytes = procData.reduce((acc, row) => acc + (Number(row.doc_size_bytes) || 0), 0);
-            let fileCount = procData.filter(row => row.doc_size_bytes > 0).length;
-            
-            clientData.forEach(row => {
-                const docs = Array.isArray(row.documents) ? row.documents : [];
-                docs.forEach(doc => {
-                    totalBytes += (Number(doc.size) || 0);
-                    fileCount++;
-                });
-            });
-        
-            return { totalBytes, fileCount };
-        } catch (err) {
-            console.error('[ProfileService] Erro no getStorageUsage:', err);
-            return { totalBytes: 0, fileCount: 0 };
-        }
+
+        // Para adicionar novas categorias no futuro, basta incluir um novo objeto neste array.
+        const sources = [
+            {
+                label: 'Titulares',
+                color: '#6366f1',
+                async fetch(sb) {
+                    // Exclui titulares que estão na lixeira
+                    const { data: trashed } = await sb
+                        .from('trash').select('item_id')
+                        .eq('organization_id', targetOrgId).eq('item_type', 'titular');
+                    const trashedIds = new Set((trashed || []).map(r => String(r.item_id)));
+
+                    const { data, error } = await sb
+                        .from('clients')
+                        .select('id, documents')
+                        .eq('organization_id', targetOrgId);
+                    if (error) throw error;
+                    let bytes = 0, count = 0;
+                    (data || []).filter(row => !trashedIds.has(String(row.id))).forEach(row => {
+                        (Array.isArray(row.documents) ? row.documents : []).forEach(doc => {
+                            bytes += (Number(doc.size) || 0);
+                            if (doc.storagePath || doc.storage_path) count++;
+                        });
+                    });
+                    return { bytes, count };
+                }
+            },
+            {
+                label: 'Processos',
+                color: '#0ea5e9',
+                async fetch(sb) {
+                    // Exclui processos que estão na lixeira
+                    const { data: trashed } = await sb
+                        .from('trash').select('item_id')
+                        .eq('organization_id', targetOrgId).eq('item_type', 'processo');
+                    const trashedIds = new Set((trashed || []).map(r => String(r.item_id)));
+
+                    const { data, error } = await sb
+                        .from('processes')
+                        .select('id, doc_storage_path, doc_size, events')
+                        .eq('organization_id', targetOrgId);
+                    if (error) throw error;
+                    
+                    let count = 0;
+                    let bytes = 0;
+                    
+                    (data || []).filter(row => !trashedIds.has(String(row.id))).forEach(row => {
+                        if (row.doc_storage_path) {
+                            count++;
+                            bytes += (Number(row.doc_size) || 0);
+                        }
+                        (Array.isArray(row.events) ? row.events : []).forEach(ev => {
+                            (Array.isArray(ev.documents) ? ev.documents : []).forEach(doc => {
+                                if (doc.storagePath || doc.storage_path) count++;
+                                bytes += (Number(doc.size) || 0);
+                            });
+                        });
+                    });
+                    return { bytes, count };
+                }
+            },
+
+            {
+                label: 'Lixeira',
+                color: '#f43f5e',
+                async fetch(sb) {
+                    const { data, error } = await sb
+                        .from('trash')
+                        .select('storage_paths, item_type, item_data')
+                        .eq('organization_id', targetOrgId);
+                    if (error) {
+                        console.warn('[ProfileService] Tabela trash não disponível:', error.message);
+                        return { bytes: 0, count: 0 };
+                    }
+                    let bytes = 0, count = 0;
+                    (data || []).forEach(row => {
+                        // Conta arquivos físicos
+                        const paths = Array.isArray(row.storage_paths) ? row.storage_paths : [];
+                        count += paths.filter(p => p && p.length > 0).length;
+
+                        // Soma bytes do snapshot do item salvo no momento da exclusão
+                        const itemData = row.item_data || {};
+                        if (row.item_type === 'titular') {
+                            // Titular: documentos diretos
+                            (Array.isArray(itemData.documents) ? itemData.documents : []).forEach(doc => {
+                                bytes += (Number(doc.size) || 0);
+                            });
+                        } else if (row.item_type === 'processo') {
+                            // Processo: tamanho do PDF principal (docSize) + documentos de eventos
+                            bytes += (Number(itemData.docSize) || 0);
+                            (Array.isArray(itemData.events) ? itemData.events : []).forEach(ev => {
+                                (Array.isArray(ev.documents) ? ev.documents : []).forEach(doc => {
+                                    bytes += (Number(doc.size) || 0);
+                                });
+                            });
+                        }
+                    });
+
+                    return { bytes, count };
+                }
+            }
+
+        ];
+
+        const breakdown = [];
+        let totalBytes = 0;
+        let fileCount = 0;
+
+        await Promise.all(sources.map(async (source, index) => {
+            try {
+                const result = await source.fetch(supabase);
+                breakdown[index] = { label: source.label, color: source.color, bytes: result.bytes, count: result.count };
+                totalBytes += result.bytes;
+                fileCount += result.count;
+            } catch (err) {
+                console.warn(`[ProfileService] Erro em "${source.label}":`, err.message);
+                breakdown[index] = { label: source.label, color: source.color, bytes: 0, count: 0 };
+            }
+        }));
+
+
+        return { totalBytes, fileCount, breakdown };
     }
 };

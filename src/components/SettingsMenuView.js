@@ -7,12 +7,11 @@ export function renderSettingsMenuView(container, options = {}) {
         profile,
         email,
         alertDays,
-        currentTheme,
+        currentTheme: initialTheme,
         isAdmin,
         teamProfiles = [],
         availableModules = [],
         teamLoading = false,
-        teamCreateLoading = false,
         onThemeChange,
         onProfileSave,
         onAlertSave,
@@ -24,14 +23,14 @@ export function renderSettingsMenuView(container, options = {}) {
     } = options;
 
     const state = {
-        activeTab: 'perfil' // 'perfil', 'alertas', 'seguranca', 'personalizacao', 'ambiente', 'equipe'
+        activeTab: 'profile', // 'perfil', 'personalizacao'
+        selectedMemberId: null,
+        currentTheme: initialTheme
     };
 
     const tabs = [
-        { id: 'perfil', label: 'Perfil e Dados', icon: profileIcon() },
-        { id: 'alertas', label: 'Sistema de Alertas', icon: bellIcon() },
-        { id: 'seguranca', label: 'Segurança', icon: lockIcon() },
-        { id: 'personalizacao', label: 'Personalização', icon: paletteIcon() }
+        { id: 'perfil', label: 'Meu Perfil', icon: profileIcon() },
+        { id: 'personalizacao', label: 'Temas', icon: paletteIcon() }
     ];
 
     const render = () => {
@@ -55,7 +54,7 @@ export function renderSettingsMenuView(container, options = {}) {
                         `).join('')}
                         
                         <div style="margin-top: auto; padding: 1rem;">
-                            <button type="button" id="settings-menu-signout" class="btn-pill settings-signout" style="width: 100%; justify-content: center; border: 1px solid var(--row-divider); background: var(--slate-100);">
+                            <button type="button" id="settings-menu-signout" class="btn-pill" style="width: 100%; justify-content: center; border: 1px solid var(--row-divider); background: var(--slate-100); color: var(--rose-500); font-weight: 700; transition: all 0.2s;">
                                 Sair do sistema
                             </button>
                         </div>
@@ -85,10 +84,6 @@ export function renderSettingsMenuView(container, options = {}) {
 
         if (state.activeTab === 'perfil') {
             renderProfileTab(settingsWrapper);
-        } else if (state.activeTab === 'alertas') {
-            renderAlertsTab(settingsWrapper);
-        } else if (state.activeTab === 'seguranca') {
-            renderSecurityTab(settingsWrapper);
         } else if (state.activeTab === 'personalizacao') {
             renderThemeTab(settingsWrapper);
         }
@@ -100,26 +95,92 @@ export function renderSettingsMenuView(container, options = {}) {
         
         target.innerHTML = `
             <div class="client-detail-shell">
-                <div class="client-detail-card">
+                <div class="client-detail-card" style="margin-bottom: 2rem;">
                     <header class="client-detail-header">
                         <div>
-                            <p class="label-tech">Configuracoes de conta</p>
-                            <h2 class="client-detail-title">Perfil e Dados</h2>
-                            <p class="client-detail-subtitle">Gerencie suas informacoes de identificacao no sistema.</p>
+                            <p class="label-tech">Minha Conta</p>
+                            <h2 class="client-detail-title">Meu Perfil</h2>
+                            <p class="client-detail-subtitle">Gerencie suas informacoes pessoais, senha e configuracoes.</p>
                         </div>
                     </header>
 
-                    <form id="settings-profile-form" class="settings-form-block" style="margin-top: 2rem; max-width: 500px;">
-                        <div style="margin-bottom: 1.5rem;">
-                            <p class="label-tech">Perfil conectado</p>
-                            <p class="settings-emphasis" style="font-size: 1.2rem; font-weight: 800; color: var(--slate-950);">${safeName}</p>
-                            <p class="settings-copy-inline">${safeEmail}</p>
+                    <form id="settings-profile-form" style="margin-top: 1.5rem; max-width: 600px;">
+                        <article class="client-info-card" style="margin-bottom: 1.5rem;">
+                            <span class="client-info-icon client-info-icon-primary">${profileIcon()}</span>
+                            <div style="flex: 1;">
+                                <p class="label-tech">PERFIL CONECTADO</p>
+                                <p class="client-info-value" style="font-size: 1.1rem;">${safeName}</p>
+                                <p class="client-info-value" style="font-size: 0.85rem; color: var(--slate-500);">${safeEmail}</p>
+                            </div>
+                        </article>
+
+                        <article class="client-info-card" style="margin-bottom: 1.5rem;">
+                            <span class="client-info-icon client-info-icon-neutral">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                            </span>
+                            <div style="flex: 1; display: flex; flex-direction: column; gap: 0.5rem;">
+                                <span class="label-tech">NOME COMPLETO</span>
+                                <input type="text" name="full_name" value="${safeName}" required style="width: 100%; padding: 0.6rem; border-radius: 8px; border: 1px solid var(--slate-200); background: var(--input-bg); color: var(--slate-950);" />
+                            </div>
+                        </article>
+
+                        <button type="submit" class="btn-pill" style="padding: 0.8rem 2rem; background: var(--slate-950); color: var(--bg-main);">Salvar alteracoes</button>
+                    </form>
+                </div>
+
+                <div class="client-detail-card" style="margin-bottom: 2rem;">
+                    <header class="client-detail-header" style="padding-bottom: 1rem; border-bottom: 1px solid var(--row-divider);">
+                        <div>
+                            <p class="label-tech">Preferencias de notificacao</p>
+                            <h2 class="client-detail-title" style="font-size: 1.25rem;">Sistema de Alertas</h2>
                         </div>
-                        <label class="settings-field" style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1.5rem;">
-                            <span class="label-tech">Nome completo</span>
-                            <input type="text" name="full_name" value="${safeName}" required style="width: 100%; padding: 0.8rem; border-radius: 12px; border: 1px solid var(--slate-200); background: var(--bg-main); color: var(--slate-950);" />
-                        </label>
-                        <button type="submit" class="btn-pill btn-black" style="padding: 0.8rem 2rem;">Salvar alteracoes</button>
+                    </header>
+
+                    <div style="margin-top: 1rem; max-width: 600px;">
+                        <p class="settings-copy-inline" style="margin-bottom: 1.5rem;">Escolha em quantos dias o sistema deve realcar os itens no painel.</p>
+                        
+                        <article class="client-info-card" style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 1rem;">
+                            <span class="client-info-icon client-info-icon-warning">${bellIcon()}</span>
+                            <div style="flex: 1; display: flex; flex-direction: column; gap: 0.5rem;">
+                                <span class="label-tech">REGRA ATUAL (DIAS)</span>
+                                <select id="settings-alert-days" style="width: 100%; padding: 0.6rem; border-radius: 8px; border: 1px solid var(--slate-200); background: var(--input-bg); color: var(--slate-950);">
+                                    ${[7, 15, 30, 45, 60].map((days) => `<option value="${days}" ${Number(alertDays) === days ? 'selected' : ''}>${days} dias</option>`).join('')}
+                                </select>
+                            </div>
+                            <button type="button" id="settings-alert-save" class="btn-pill" style="padding: 0.6rem 1.2rem; background: var(--slate-950); color: var(--bg-main);">Salvar regra</button>
+                        </article>
+                    </div>
+                </div>
+
+                <div class="client-detail-card" style="margin-bottom: 2rem;">
+                    <header class="client-detail-header" style="padding-bottom: 1rem; border-bottom: 1px solid var(--row-divider);">
+                        <div>
+                            <p class="label-tech">Protecao de conta</p>
+                            <h2 class="client-detail-title" style="font-size: 1.25rem;">Seguranca</h2>
+                        </div>
+                    </header>
+
+                    <form id="settings-password-form" style="margin-top: 1rem; max-width: 600px;">
+                        <p class="settings-copy-inline" style="margin-bottom: 1.5rem;">Atualize sua senha para garantir um acesso protegido.</p>
+                        
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
+                            <article class="client-info-card">
+                                <span class="client-info-icon client-info-icon-danger">${lockIcon()}</span>
+                                <div style="flex: 1; display: flex; flex-direction: column; gap: 0.5rem;">
+                                    <span class="label-tech">NOVA SENHA</span>
+                                    <input type="password" name="password" minlength="6" required style="width: 100%; padding: 0.6rem; border-radius: 8px; border: 1px solid var(--slate-200); background: var(--input-bg); color: var(--slate-950);" />
+                                </div>
+                            </article>
+
+                            <article class="client-info-card">
+                                <span class="client-info-icon client-info-icon-danger">${lockIcon()}</span>
+                                <div style="flex: 1; display: flex; flex-direction: column; gap: 0.5rem;">
+                                    <span class="label-tech">CONFIRMAR SENHA</span>
+                                    <input type="password" name="confirm_password" minlength="6" required style="width: 100%; padding: 0.6rem; border-radius: 8px; border: 1px solid var(--slate-200); background: var(--input-bg); color: var(--slate-950);" />
+                                </div>
+                            </article>
+                        </div>
+                        <button type="submit" class="btn-pill" style="padding: 0.8rem 2rem; background: var(--slate-950); color: var(--bg-main);">Atualizar senha</button>
                     </form>
                 </div>
             </div>
@@ -130,72 +191,11 @@ export function renderSettingsMenuView(container, options = {}) {
             const formData = new FormData(e.currentTarget);
             await onProfileSave({ full_name: formData.get('full_name').trim() });
         });
-    };
-
-    const renderAlertsTab = (target) => {
-        target.innerHTML = `
-            <div class="client-detail-shell">
-                <div class="client-detail-card">
-                    <header class="client-detail-header">
-                        <div>
-                            <p class="label-tech">Preferencias de notificacao</p>
-                            <h2 class="client-detail-title">Sistema de Alertas</h2>
-                            <p class="client-detail-subtitle">Defina as regras de antecedencia para destaque de prazos e vencimentos.</p>
-                        </div>
-                    </header>
-
-                    <div class="settings-form-block" style="margin-top: 2rem; max-width: 500px;">
-                        <p class="settings-emphasis" style="font-size: 1.1rem; font-weight: 700; color: var(--slate-950);">Antecedencia padrao</p>
-                        <p class="settings-copy-inline" style="margin-bottom: 1.5rem;">Escolha em quantos dias o sistema deve realcar os itens no painel.</p>
-                        
-                        <div class="settings-inline-row" style="display: flex; gap: 1rem; align-items: flex-end;">
-                            <label class="settings-field" style="flex: 1; display: flex; flex-direction: column; gap: 0.5rem;">
-                                <span class="label-tech">Regra atual</span>
-                                <select id="settings-alert-days" style="width: 100%; padding: 0.8rem; border-radius: 12px; border: 1px solid var(--slate-200); background: var(--bg-main); color: var(--slate-950);">
-                                    ${[7, 15, 30, 45, 60].map((days) => `<option value="${days}" ${Number(alertDays) === days ? 'selected' : ''}>${days} dias</option>`).join('')}
-                                </select>
-                            </label>
-                            <button type="button" id="settings-alert-save" class="btn-pill btn-black" style="padding: 0.8rem 1.5rem;">Salvar regra</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
 
         target.querySelector('#settings-alert-save')?.addEventListener('click', async () => {
             const val = Number(target.querySelector('#settings-alert-days')?.value);
             await onAlertSave(val);
         });
-    };
-
-    const renderSecurityTab = (target) => {
-        target.innerHTML = `
-            <div class="client-detail-shell">
-                <div class="client-detail-card">
-                    <header class="client-detail-header">
-                        <div>
-                            <p class="label-tech">Protecao de conta</p>
-                            <h2 class="client-detail-title">Seguranca</h2>
-                            <p class="client-detail-subtitle">Mantenha sua senha atualizada para garantir o acesso protegido ao ambiente.</p>
-                        </div>
-                    </header>
-
-                    <form id="settings-password-form" class="settings-form-block" style="margin-top: 2rem; max-width: 500px;">
-                        <div style="display: grid; gap: 1.5rem; margin-bottom: 1.5rem;">
-                            <label class="settings-field" style="display: flex; flex-direction: column; gap: 0.5rem;">
-                                <span class="label-tech">Nova senha</span>
-                                <input type="password" name="password" minlength="6" required style="width: 100%; padding: 0.8rem; border-radius: 12px; border: 1px solid var(--slate-200); background: var(--bg-main); color: var(--slate-950);" />
-                            </label>
-                            <label class="settings-field" style="display: flex; flex-direction: column; gap: 0.5rem;">
-                                <span class="label-tech">Confirmar nova senha</span>
-                                <input type="password" name="confirm_password" minlength="6" required style="width: 100%; padding: 0.8rem; border-radius: 12px; border: 1px solid var(--slate-200); background: var(--bg-main); color: var(--slate-950);" />
-                            </label>
-                        </div>
-                        <button type="submit" class="btn-pill btn-black" style="padding: 0.8rem 2rem;">Atualizar senha</button>
-                    </form>
-                </div>
-            </div>
-        `;
 
         target.querySelector('#settings-password-form')?.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -221,12 +221,12 @@ export function renderSettingsMenuView(container, options = {}) {
                     </header>
 
                     <div class="settings-theme-block" style="margin-top: 2rem;">
-                        <div class="settings-theme-options" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 1rem;">
-                            ${renderThemeBtn('niobio', 'Niobio', currentTheme)}
-                            ${renderThemeBtn('diamante', 'Diamante', currentTheme)}
-                            ${renderThemeBtn('topazio', 'Topazio', currentTheme)}
-                            ${renderThemeBtn('ouro', 'Ouro', currentTheme)}
-                            ${renderThemeBtn('esmeralda', 'Esmeralda', currentTheme)}
+                        <div class="settings-theme-options" style="display: flex; flex-direction: column; gap: 1rem; max-width: 500px;">
+                            ${renderThemeBtn('niobio', 'Niôbio', state.currentTheme, 'linear-gradient(135deg, #1e293b, #0f172a)', '#ffffff')}
+                            ${renderThemeBtn('diamante', 'Diamante', state.currentTheme, 'linear-gradient(135deg, #f0f4f9, #ffffff)', '#0b57d0')}
+                            ${renderThemeBtn('topazio', 'Topázio', state.currentTheme, 'linear-gradient(135deg, #eff6ff, #bfdbfe)', '#1e3a8a')}
+                            ${renderThemeBtn('ouro', 'Ouro', state.currentTheme, 'linear-gradient(135deg, #fefce8, #fef08a)', '#854d0e')}
+                            ${renderThemeBtn('esmeralda', 'Esmeralda', state.currentTheme, 'linear-gradient(135deg, #f0fdf4, #bbf7d0)', '#14532d')}
                         </div>
                     </div>
                 </div>
@@ -236,92 +236,14 @@ export function renderSettingsMenuView(container, options = {}) {
         target.querySelectorAll('[data-theme-id]').forEach(btn => {
             btn.addEventListener('click', () => {
                 const tid = btn.dataset.themeId;
+                state.currentTheme = tid;
                 onThemeChange(tid);
                 renderActiveTab(); // Re-render for active state
             });
         });
     };
 
-    const renderEnvironmentTab = async (target) => {
-        target.innerHTML = `
-            <div class="client-detail-shell">
-                <div class="client-detail-card">
-                    <header class="client-detail-header">
-                        <div>
-                            <p class="label-tech">Sincronizacao técnica</p>
-                            <h2 class="client-detail-title">Status do Ambiente</h2>
-                            <p class="client-detail-subtitle">Verifique a saúde da conexão e o consumo de recursos da GEOCONSULT.</p>
-                        </div>
-                    </header>
 
-                    <div id="migration-status-anchor"></div>
-
-                    <div id="storage-usage-container" style="margin-top: 2rem; margin-bottom: 2rem;">
-                        <div class="glass-card" style="padding: 2rem; border-radius: 24px; text-align: center;">
-                            <p class="label-tech">CARREGANDO DADOS DE CONSUMO...</p>
-                        </div>
-                    </div>
-
-                    <div class="settings-status-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                        <div class="settings-status-card" style="display: flex; gap: 1rem; padding: 1.5rem; border-radius: 18px; background: var(--bg-main); border: 1px solid var(--slate-200);">
-                            <span class="settings-status-icon" style="color: var(--blue-500);">${shieldIcon()}</span>
-                            <div>
-                                <p class="settings-emphasis" style="font-weight: 700; color: var(--slate-950);">Supabase Auth</p>
-                                <p class="settings-copy-inline">Sessão protegida.</p>
-                            </div>
-                        </div>
-                        <div class="settings-status-card" style="display: flex; gap: 1rem; padding: 1.5rem; border-radius: 18px; background: var(--bg-main); border: 1px solid var(--slate-200);">
-                            <span class="settings-status-icon" style="color: var(--primary);">${databaseIcon()}</span>
-                            <div>
-                                <p class="settings-emphasis" style="font-weight: 700; color: var(--slate-950);">Data Lake</p>
-                                <p class="settings-copy-inline">Conexão estável.</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div style="margin-top: 2rem; padding: 2rem; border-radius: 24px; background: var(--slate-950); color: white;">
-                        <h3 class="font-black" style="font-size: 1.1rem; margin-bottom: 0.5rem;">Cópia de Segurança (Backup)</h3>
-                        <p style="font-size: 0.85rem; color: var(--slate-400); margin-bottom: 1.5rem;">Gere um arquivo compactado contendo todos os documentos e metadados da sua organização.</p>
-                        <button type="button" id="btn-generate-backup" class="btn-pill btn-action-trigger" style="background: white; color: black; font-weight: 800; border: none; padding: 0.8rem 1.5rem; cursor: pointer;">
-                            SOLICITAR DOWNLOAD (.ZIP)
-                        </button>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        const downloadBtn = target.querySelector('#btn-generate-backup');
-        if (downloadBtn) {
-            downloadBtn.onclick = () => {
-                if (typeof showNoticeModal === 'function') {
-                    showNoticeModal('Funcionalidade em desenvolvimento', 'A geração de backup estruturado está sendo processada nos servidores da GEOCONSULT. Você receberá um link quando o arquivo estiver pronto.');
-                } else {
-                    alert('A geração de backup estruturado está sendo processada. Você receberá um link em breve.');
-                }
-            };
-        }
-
-        try {
-            const { profileService } = await import('../utils/ProfileService.js');
-            const { renderStorageUsageCard } = await import('./StorageUsageCard.js');
-            
-            const activeOrgId = options.profile?.organization_id || window.__APP_CONTROL_ACTIVE_ORG_ID__;
-            console.log('[SettingsMenuView] Carregando ambiente para Org:', activeOrgId);
-
-            const usage = await profileService.getStorageUsage(activeOrgId).catch(e => { 
-                console.error(e); 
-                return {totalBytes:0, fileCount:0}; 
-            });
-            
-            console.log('[SettingsMenuView] Resultados de consumo:', usage);
-
-            const container = target.querySelector('#storage-usage-container');
-            if (container) renderStorageUsageCard(container, usage);
-
-        } catch (error) {
-            console.error('Erro geral ao carregar dados do ambiente:', error);
-        }
-    };
 
     const bindEvents = () => {
         container.querySelectorAll('[data-tab-id]').forEach(btn => {
@@ -337,16 +259,30 @@ export function renderSettingsMenuView(container, options = {}) {
     render();
 }
 
-function renderThemeBtn(id, label, current) {
+function renderThemeBtn(id, label, current, bgGradient, textColor) {
     const active = id === current;
     return `
         <button
             type="button"
             class="settings-theme-option ${active ? 'is-active' : ''}"
             data-theme-id="${id}"
-            style="padding: 1rem; border-radius: 14px; border: 1px solid ${active ? 'var(--primary)' : 'var(--slate-200)'}; background: ${active ? 'var(--primary-light)' : 'var(--bg-main)'}; color: ${active ? 'var(--primary)' : 'var(--slate-900)'}; font-weight: 600;"
+            style="
+                padding: 1.25rem 1.5rem; 
+                border-radius: 16px; 
+                border: 2px solid ${active ? 'var(--primary)' : 'transparent'}; 
+                background: ${bgGradient}; 
+                color: ${textColor}; 
+                font-weight: 800; 
+                display: flex; 
+                align-items: center; 
+                justify-content: space-between;
+                box-shadow: ${active ? '0 4px 12px rgba(0,0,0,0.1)' : '0 2px 4px rgba(0,0,0,0.05)'};
+                transition: transform 0.2s, box-shadow 0.2s;
+                cursor: pointer;
+            "
         >
-            ${label}
+            <span style="font-size: 1.1rem;">${label}</span>
+            ${active ? `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary)"><polyline points="20 6 9 17 4 12"/></svg>` : ''}
         </button>
     `;
 }
@@ -359,4 +295,3 @@ function paletteIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18"
 function activityIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>`; }
 function usersIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`; }
 function shieldIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>`; }
-function databaseIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>`; }

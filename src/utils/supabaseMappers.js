@@ -101,9 +101,9 @@ export function mapProcessRowToModel(row) {
         events: normalizeArray(row.events),
         docBase64: row.doc_base64 || '',
         docStoragePath: row.doc_storage_path || '',
-        docSize: row.doc_size_bytes || 0,
         docName: row.doc_name || '',
-        docType: row.doc_type || ''
+        docType: row.doc_type || '',
+        docSize: Number(row.doc_size) || 0
     };
 }
 
@@ -136,8 +136,8 @@ export function mapProcessModelToRow(process, resolvedProjectName = '') {
         })),
         doc_base64: '', // Força a supressão do base64 para evitar blobs gigantes na tabela.
         doc_storage_path: process.docStoragePath || '',
-        doc_size_bytes: process.docSize || 0,
         doc_name: process.docName || '',
-        doc_type: process.docType || ''
+        doc_type: process.docType || '',
+        doc_size: Number(process.docSize) || 0
     };
 }
