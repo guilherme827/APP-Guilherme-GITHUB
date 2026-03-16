@@ -833,7 +833,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     onRefreshTeam: handleRefreshTeam,
                     onCreateTeamMember: async (payload) => {
                         try {
-                            await profileService.createProfile(payload);
+                            await profileService.createMember(payload);
                             showNoticeModal('Membro criado', 'O novo membro foi convidado com sucesso.');
                             await handleRefreshTeam();
                         } catch (error) {
@@ -842,7 +842,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     },
                     onUpdateTeamMember: async (payload) => {
                         try {
-                            await profileService.updateProfilePermissions(payload);
+                            await profileService.updateMember(payload);
                             showNoticeModal('Permissões atualizadas', 'As regras de acesso foram salvas.');
                             await handleRefreshTeam();
                         } catch (error) {
@@ -882,7 +882,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     onRefreshTeam: handleRefreshTeam,
                     onCreateTeamMember: async (payload) => {
                         try {
-                            await profileService.createProfile(payload);
+                            await profileService.createMember(payload);
                             showNoticeModal('Membro criado', 'O novo membro foi convidado com sucesso.');
                             await handleRefreshTeam();
                         } catch (error) {
@@ -891,7 +891,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     },
                     onUpdateTeamMember: async (payload) => {
                         try {
-                            await profileService.updateProfilePermissions(payload);
+                            await profileService.updateMember(payload);
                             showNoticeModal('Permissões atualizadas', 'As regras de acesso foram salvas.');
                             await handleRefreshTeam();
                         } catch (error) {

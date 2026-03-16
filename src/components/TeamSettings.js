@@ -227,6 +227,7 @@ export function renderTeamSettings(container, {
                 padding: 0.85rem 0.95rem;
                 background: var(--card-bg);
                 font-family: inherit;
+                color: var(--slate-700);
                 outline: none;
             }
             .team-member-card {
