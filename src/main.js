@@ -866,7 +866,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 const handleRefreshTeam = async () => {
                     try {
-                        await ensureTeamProfilesLoaded(true);
+                        teamProfiles = await ensureTeamProfilesLoaded(true);
                         void navigate('admin-panel');
                     } catch (error) {
                         showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível carregar a equipe.');
@@ -874,7 +874,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 };
 
                 try {
-                    await ensureTeamProfilesLoaded();
+                    teamProfiles = await ensureTeamProfilesLoaded();
                 } catch (error) {
                     showNoticeModal('Erro de conexão', 'Não foi possível carregar os dados da equipe.');
                 }
