@@ -2131,6 +2131,11 @@ body[data-theme='esmeralda'] {
     z-index: 200;
 }
 
+.bento-ghost-menu--right {
+    left: auto;
+    right: 0;
+}
+
 
 
 .bento-add-fab:focus-visible,

@@ -880,7 +880,7 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
                     <span class="bento-ghost-label">Adicionar Widget</span>
                 </button>
                 ${addWidgetMenuOpen ? `
-                    <div class="bento-add-menu bento-ghost-menu" id="dashboard-widget-type-menu" role="menu" aria-label="Tipos de widget">
+                    <div class="bento-add-menu bento-ghost-menu ${ghostCol > Math.ceil(currentGridColumns / 2) ? 'bento-ghost-menu--right' : ''}" id="dashboard-widget-type-menu" role="menu" aria-label="Tipos de widget">
                         ${widgetTypes.map((type) => `
                             <button type="button" class="bento-add-menu-item" data-action="create-widget" data-widget-type="${type.id}" role="menuitem">
                                 <span class="bento-add-menu-item-title">${type.label}</span>
