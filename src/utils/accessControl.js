@@ -79,13 +79,13 @@ export function canViewSection(profile, sectionId, enabledModules = null) {
 }
 
 export function canEditContent(profile) {
-    if (hasAdminAccess(profile)) return true;
-    return normalizePermissions(profile?.permissions).edit;
+    // Permissoes granulares foram removidas do painel; se tem acesso a visualizar, tem acesso de criar.
+    return true;
 }
 
 export function canDeleteContent(profile) {
-    if (hasAdminAccess(profile)) return true;
-    return normalizePermissions(profile?.permissions).delete;
+    // Permissoes granulares foram removidas do painel; se tem acesso a visualizar, tem acesso de exclusao.
+    return true;
 }
 
 export function getWelcomeLabel(profile) {
