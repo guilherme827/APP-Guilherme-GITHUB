@@ -676,6 +676,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     onRefresh: async () => {
                         try {
                             await ensureOrganizationsLoaded(true);
+                            if (viewCache.has('organizacoes')) viewCache.get('organizacoes').initialized = false;
                             void navigate('organizacoes');
                         } catch (error) {
                             showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível atualizar as organizações.');
@@ -687,6 +688,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             await profileService.createOrganization(payload);
                             await ensureOrganizationsLoaded(true);
                             showNoticeModal('Organização criada', 'A nova organização e o administrador principal foram provisionados com sucesso.');
+                            if (viewCache.has('organizacoes')) viewCache.get('organizacoes').initialized = false;
                             void navigate('organizacoes');
                         } catch (error) {
                             showNoticeModal('Erro ao criar', error?.message || 'Não foi possível criar a organização.');
@@ -698,6 +700,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         try {
                             await profileService.updateOrganization(payload);
                             await ensureOrganizationsLoaded(true);
+                            if (viewCache.has('organizacoes')) viewCache.get('organizacoes').initialized = false;
                             void navigate('organizacoes');
                         } catch (error) {
                             showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível atualizar a organização.');
@@ -775,6 +778,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const handleRefreshTeam = async () => {
                     try {
                         await ensureTeamProfilesLoaded(true);
+                        if (viewCache.has('configuracoes')) viewCache.get('configuracoes').initialized = false;
                         void navigate('configuracoes');
                     } catch (error) {
                         showNoticeModal('Erro ao atualizar', error?.message || 'Nao foi possivel carregar a equipe.');
@@ -867,6 +871,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const handleRefreshTeam = async () => {
                     try {
                         teamProfiles = await ensureTeamProfilesLoaded(true);
+                        if (viewCache.has('admin-panel')) viewCache.get('admin-panel').initialized = false;
                         void navigate('admin-panel');
                     } catch (error) {
                         showNoticeModal('Erro ao atualizar', error?.message || 'Não foi possível carregar a equipe.');
