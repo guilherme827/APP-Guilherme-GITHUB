@@ -873,6 +873,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 };
 
+                try {
+                    await ensureTeamProfilesLoaded();
+                } catch (error) {
+                    showNoticeModal('Erro de conexão', 'Não foi possível carregar os dados da equipe.');
+                }
+
                 renderAdminPanelView(contentArea, {
                     profile: state.currentProfile,
                     isAdmin,
