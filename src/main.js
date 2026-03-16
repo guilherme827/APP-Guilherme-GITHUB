@@ -834,7 +834,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     onCreateTeamMember: async (payload) => {
                         try {
                             await profileService.createMember(payload);
-                            showNoticeModal('Membro criado', 'O novo membro foi convidado com sucesso.');
+                            showNoticeModal('Membro criado', 'O novo membro foi criado com sucesso e já tem acesso ao sistema.');
                             await handleRefreshTeam();
                         } catch (error) {
                             showNoticeModal('Erro ao criar', error?.message || 'Falha ao cadastrar membro.');
@@ -889,7 +889,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     onCreateTeamMember: async (payload) => {
                         try {
                             await profileService.createMember(payload);
-                            showNoticeModal('Membro criado', 'O novo membro foi convidado com sucesso.');
+                            showNoticeModal('Membro criado', 'O novo membro foi criado com sucesso e já tem acesso ao sistema.');
                             await handleRefreshTeam();
                         } catch (error) {
                             showNoticeModal('Erro ao criar', error?.message || 'Falha ao cadastrar membro.');
