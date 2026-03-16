@@ -858,7 +858,7 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
 
         // Ghost Card: encontrar o primeiro slot vazio da primeira linha
         const firstRowSlots = Array.from({ length: currentGridColumns }, (_, i) => i + 1);
-        const firstEmptyInRow1 = firstRowSlots.find((slot) => !currentGridState.occupied.has(slot)) ?? (lastOccupied + 1);
+        const firstEmptyInRow1 = firstRowSlots.find((slot) => !currentGridState.occupied.has(slot)) ?? (maxOccupiedSlot + 1);
         const ghostSlotIndex = firstEmptyInRow1;
         const ghostRow = Math.floor((ghostSlotIndex - 1) / currentGridColumns) + 1;
         const ghostCol = ((ghostSlotIndex - 1) % currentGridColumns) + 1;
