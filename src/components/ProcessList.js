@@ -74,13 +74,14 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
         container.innerHTML = `
             <div class="client-master-detail bounded-scroll-layout">
                 <aside class="client-master-panel" style="width: 380px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--bg-main); border-right: 1px solid var(--slate-100);">
-                    <div class="client-master-header" style="padding: 1rem 1.5rem; border-bottom: 1px solid var(--slate-100);">
-                        <label class="client-master-search">
+                    <div class="client-master-header" style="padding: 1rem 1.5rem; border-bottom: 1px solid var(--slate-100); display: flex; gap: 0.5rem; align-items: center;">
+                        <label class="client-master-search" style="flex: 1;">
                             <span class="client-master-search-icon" aria-hidden="true">
                                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
                             </span>
                             <input type="search" id="tree-search-input" value="${escapeAttribute(query)}" placeholder="Buscar processo, titular ou projeto..." />
                         </label>
+                        ${canEdit ? `<button type="button" class="client-master-add" id="btn-global-add-process" aria-label="Adicionar processo" title="Registrar Novo Processo">${addProcessIcon()}</button>` : ''}
                     </div>
                     <div class="custom-scrollbar" id="tree-container" style="flex: 1; overflow-y: auto; padding: 1rem 0;"></div>
                 </aside>
@@ -93,6 +94,13 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
             searchInput.addEventListener('input', (event) => {
                 query = String(event.target.value || '').toLowerCase().trim();
                 renderTree();
+            });
+        }
+        
+        const btnGlobalAddProcess = container.querySelector('#btn-global-add-process');
+        if (btnGlobalAddProcess) {
+            btnGlobalAddProcess.addEventListener('click', () => {
+                if (typeof onAddProcess === 'function') onAddProcess(null, null);
             });
         }
         
