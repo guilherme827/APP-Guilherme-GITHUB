@@ -21,7 +21,6 @@ function getCurrentOrganizationId() {
 export class ProcessStore {
     constructor() {
         this.processes = [];
-        this.projects = [];
         this.ready = Promise.resolve();
         this.isLoaded = false;
     }
@@ -53,7 +52,6 @@ export class ProcessStore {
             .filter(row => !trashedIds.has(String(row.id)))
             .map(mapProcessRowToModel);
             
-        this.rebuildProjects();
         this.sanitizeDeadlines();
         this.sanitizeExtractEvents();
         this.isLoaded = true;
@@ -67,13 +65,8 @@ export class ProcessStore {
 
     reset() {
         this.processes = [];
-        this.projects = [];
         this.isLoaded = false;
         this.ready = Promise.resolve();
-    }
-
-    rebuildProjects() {
-        this.projects = buildProjectsFromProcesses(this.processes);
     }
 
     sanitizeDeadlines() {
@@ -218,29 +211,6 @@ export class ProcessStore {
         return events;
     }
 
-    getProjectsByClient(clientId) {
-        return this.projects.filter((project) => String(project.clientId) === String(clientId));
-    }
-
-    addProject(project) {
-        const normalizedName = String(project?.name || '').trim();
-        if (!normalizedName) return null;
-
-        const existing = this.projects.find((current) =>
-            String(current.clientId) === String(project.clientId)
-            && current.name.toLowerCase().trim() === normalizedName.toLowerCase()
-        );
-        if (existing) return existing;
-
-        const newProject = {
-            id: buildProjectId(project.clientId, normalizedName),
-            clientId: Number(project.clientId),
-            name: normalizedName
-        };
-        this.projects = [...this.projects, newProject].sort((a, b) => a.name.localeCompare(b.name));
-        return newProject;
-    }
-
     getUniqueFieldValues(field) {
         const values = this.processes
             .map((process) => process[field])
@@ -304,29 +274,14 @@ export class ProcessStore {
         return this.processes.filter((process) => String(process.projectId) === String(projectId));
     }
 
-    resolveProject(projectData) {
-        if (projectData.projectId) {
-            const existing = this.projects.find((project) => String(project.id) === String(projectData.projectId));
-            if (existing) return existing;
-        }
-
-        const projectName = String(projectData.projectName || '').trim();
-        if (!projectName) return null;
-        return this.addProject({
-            clientId: Number(projectData.clientId),
-            name: projectName
-        });
-    }
-
     async addProcess(processData) {
-        const project = this.resolveProject(processData);
         const hasDocSource = (doc) => !!(doc?.base64 || doc?.storagePath);
 
         const preparedProcess = {
             ...processData,
             organizationId: getCurrentOrganizationId(),
-            projectId: project?.id || null,
-            projectName: project?.name || '',
+            projectId: String(processData.projectId) || null,
+            projectName: processData.projectName || '',
             clientId: Number(processData.clientId),
             deadlines: (processData.deadlines || []).map((deadline, index) => ({
                 ...deadline,
@@ -353,7 +308,7 @@ export class ProcessStore {
         delete preparedProcess.projectName;
         preparedProcess.events = this.syncInitialExtractEvent(preparedProcess);
 
-        const payload = mapProcessModelToRow(preparedProcess, project?.name || '');
+        const payload = mapProcessModelToRow(preparedProcess, processData?.projectName || '');
         const { data, error } = await supabase
             .from('processes')
             .insert(payload)
@@ -366,7 +321,6 @@ export class ProcessStore {
 
         const created = mapProcessRowToModel(data);
         this.processes = [...this.processes, created];
-        this.rebuildProjects();
 
         // Registro de Atividade
         const client = clientStore.clients.find(c => String(c.id) === String(created.clientId));
@@ -387,20 +341,14 @@ export class ProcessStore {
         const existingProcess = this.processes.find((process) => String(process.id) === String(id));
         if (!existingProcess) return false;
 
-        const project = this.resolveProject({
-            clientId: updatedData.clientId || existingProcess.clientId,
-            projectId: updatedData.projectId,
-            projectName: updatedData.projectName
-        });
-
         const hasDocSource = (doc) => !!(doc?.base64 || doc?.storagePath);
         const nextProcess = {
             ...existingProcess,
             ...updatedData,
             organizationId: existingProcess.organizationId || getCurrentOrganizationId(),
             clientId: Number(updatedData.clientId || existingProcess.clientId),
-            projectId: project?.id || null,
-            projectName: project?.name || '',
+            projectId: updatedData.projectId !== undefined ? updatedData.projectId : existingProcess.projectId,
+            projectName: updatedData.projectName !== undefined ? updatedData.projectName : existingProcess.projectName,
             deadlines: (updatedData.deadlines || existingProcess.deadlines || []).map((deadline, index) => ({
                 ...deadline,
                 id: deadline.id || `${Date.now()}-${index}`,
@@ -424,7 +372,7 @@ export class ProcessStore {
         };
 
         nextProcess.events = this.syncInitialExtractEvent(nextProcess);
-        const payload = mapProcessModelToRow(nextProcess, project?.name || '');
+        const payload = mapProcessModelToRow(nextProcess, nextProcess.projectName || '');
 
         const { data, error } = await supabase
             .from('processes')
@@ -440,7 +388,6 @@ export class ProcessStore {
 
         const updated = mapProcessRowToModel(data);
         this.processes = this.processes.map((process) => (String(process.id) === String(id) ? updated : process));
-        this.rebuildProjects();
 
         // Registro de Atividade
         const client = clientStore.clients.find(c => String(c.id) === String(updated.clientId));
@@ -540,7 +487,6 @@ export class ProcessStore {
         // Remove do array local imediatamente (some da tela)
         const changed = this.processes.some((p) => String(p.id) === String(id));
         this.processes = this.processes.filter((p) => String(p.id) !== String(id));
-        this.rebuildProjects();
 
         // Registro de atividade
         activityLogger.logAction({

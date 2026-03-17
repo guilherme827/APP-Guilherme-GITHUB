@@ -1,5 +1,6 @@
 import { processStore } from '../utils/ProcessStore.js';
 import { clientStore } from '../utils/ClientStore.js';
+import { projectStore } from '../utils/ProjectStore.js';
 import { escapeHtml } from '../utils/sanitize.js';
 import { getDocumentAccessUrl } from '../utils/DocumentStorage.js';
 
@@ -13,7 +14,7 @@ export function renderProcessDetails(container, actionsContainer, processId, onN
     const client = clientStore.clients.find(c => c.id == process.clientId);
     const clientName = client ? (client.type === 'PF' ? client.nome : client.nomeFantasia) : '–';
     
-    const project = process.projectId ? processStore.projects.find(p => p.id == process.projectId) : null;
+    const project = process.projectId ? projectStore.projects.find(p => String(p.id) === String(process.projectId)) : null;
 
     const formatDate = (dateStr) => {
         if (!dateStr) return '–';
@@ -84,15 +85,6 @@ export function renderProcessDetails(container, actionsContainer, processId, onN
 
     container.innerHTML = `
         <div class="animate-fade-in" style="max-width: 100%; display:flex; flex-direction:column; gap:1.25rem;">
-            <div class="label-tech" style="display:flex; align-items:center; gap:0.4rem; color:var(--slate-400); flex-wrap:wrap;">
-                <span id="crumb-processos" style="cursor:pointer; color:var(--primary);">PROCESSOS</span>
-                <span>›</span>
-                <span id="crumb-client" style="cursor:pointer; color:var(--primary);">${escapeHtml(clientName.toUpperCase())}</span>
-                ${project ? `<span>›</span><span id="crumb-project" style="cursor:pointer; color:var(--primary);">PROJETO ${escapeHtml(project.name.toUpperCase())}</span>` : ''}
-                <span>›</span>
-                <span style="color:var(--slate-600);">${escapeHtml(procLabel)}</span>
-            </div>
-
             <div class="glass-card" style="padding:1.25rem 1.5rem;">
                 <div style="display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:1rem; margin-bottom:0.75rem;">
                     <div>
@@ -203,11 +195,7 @@ export function renderProcessDetails(container, actionsContainer, processId, onN
         </div>
     `;
 
-    // Wire breadcrumb navigation — each crumb navigates to its exact level
-    container.querySelector('#crumb-processos').onclick = () => onNavigate.toProcessList();
-    container.querySelector('#crumb-client').onclick = () => onNavigate.toClient();
-    const crumbProject = container.querySelector('#crumb-project');
-    if (crumbProject) crumbProject.onclick = () => onNavigate.toProject && onNavigate.toProject();
+    // Breadcrumbs removidos (arquitetura nova)
 
     container.querySelectorAll('.btn-download-doc-event').forEach((btn) => {
         btn.onclick = async () => {

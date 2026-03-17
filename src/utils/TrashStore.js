@@ -40,7 +40,7 @@ class TrashStore {
     /**
      * Envia um item para a lixeira (soft delete).
      * @param {object} options
-     * @param {'processo'|'titular'} options.item_type
+     * @param {'processo'|'titular'|'projeto'} options.item_type
      * @param {string|number} options.item_id - ID original do item no banco
      * @param {string} options.item_label - Nome/número exibido na lixeira
      * @param {object} options.item_data - Snapshot completo do item
@@ -120,6 +120,15 @@ class TrashStore {
             if (dbError) {
                 console.warn('[TrashStore] Aviso ao deletar titular do banco:', dbError);
             }
+        } else if (trashItem.item_type === 'projeto') {
+            const { error: dbError } = await supabase
+                .from('projects')
+                .delete()
+                .eq('id', trashItem.item_id)
+                .eq('organization_id', orgId);
+            if (dbError) {
+                console.warn('[TrashStore] Aviso ao deletar projeto do banco:', dbError);
+            }
         }
 
         // 3. Remove da tabela trash
@@ -135,9 +144,10 @@ class TrashStore {
         this.items = this.items.filter(item => String(item.id) !== String(trashId));
 
         // Registro de atividade
+        const typeMap = { 'processo': 'PROCESSO', 'titular': 'TITULAR', 'projeto': 'PROJETO' };
         activityLogger.logAction({
             action_type: 'PERMANENT_DELETE',
-            entity_type: trashItem.item_type === 'processo' ? 'PROCESSO' : 'TITULAR',
+            entity_type: typeMap[trashItem.item_type] || 'DESCONHECIDO',
             entity_id: trashItem.item_id,
             entity_label: trashItem.item_label
         });
@@ -166,9 +176,10 @@ class TrashStore {
 
         // Registro de atividade
         if (trashItem) {
+            const typeMap = { 'processo': 'PROCESSO', 'titular': 'TITULAR', 'projeto': 'PROJETO' };
             activityLogger.logAction({
                 action_type: 'RESTORE',
-                entity_type: trashItem.item_type === 'processo' ? 'PROCESSO' : 'TITULAR',
+                entity_type: typeMap[trashItem.item_type] || 'DESCONHECIDO',
                 entity_id: trashItem.item_id,
                 entity_label: trashItem.item_label
             });

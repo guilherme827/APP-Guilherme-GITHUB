@@ -1,5 +1,6 @@
 import { clientStore } from '../utils/ClientStore.js';
 import { processStore } from '../utils/ProcessStore.js';
+import { projectStore } from '../utils/ProjectStore.js';
 import { AIService } from '../utils/AIService.js';
 import { showNoticeModal } from './NoticeModal.js';
 import { escapeHtml } from '../utils/sanitize.js';
@@ -279,7 +280,7 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
         // Initial Project Name if id exists
         let initialProjectName = '';
         if (formData.projectId) {
-            const proj = processStore.projects.find(p => p.id == formData.projectId);
+            const proj = projectStore.projects.find(p => p.id == formData.projectId);
             initialProjectName = proj ? proj.name : '';
         }
         const getEventDisplayDocs = (event) => {
@@ -639,7 +640,7 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
             input.onfocus = () => {
                 const val = input.value.toLowerCase().trim();
                 const items = memoryField === 'clients' ? clients : 
-                             memoryField === 'projects' ? processStore.getProjectsByClient(Number(container.querySelector('#client-id-hidden').value)) :
+                             memoryField === 'projects' ? projectStore.getProjectsByClient(Number(container.querySelector('#client-id-hidden').value)) :
                              processStore.getUniqueFieldValues(memoryField);
                 
                 renderResults(items, val);
@@ -648,7 +649,7 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
             input.oninput = (e) => {
                 const val = e.target.value.toLowerCase().trim();
                 const items = memoryField === 'clients' ? clients : 
-                             memoryField === 'projects' ? processStore.getProjectsByClient(Number(container.querySelector('#client-id-hidden').value)) :
+                             memoryField === 'projects' ? projectStore.getProjectsByClient(Number(container.querySelector('#client-id-hidden').value)) :
                              processStore.getUniqueFieldValues(memoryField);
                 
                 if (hidden) hidden.value = ''; // Reset ID if user types
