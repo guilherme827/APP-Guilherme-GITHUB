@@ -24,12 +24,21 @@ function addProcessIcon() {
     `;
 }
 
-function addProjectIcon() {
+function addProcessMasterIcon() {
     return `
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
             <line x1="12" y1="11" x2="12" y2="17"></line>
             <line x1="9" y1="14" x2="15" y2="14"></line>
+        </svg>
+    `;
+}
+
+function searchIcon() {
+    return `
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <path d="m21 21-4.3-4.3"></path>
         </svg>
     `;
 }
@@ -73,7 +82,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
 
     const getClientsWithProcesses = () => clientStore.clients.filter((client) => {
         const hasProcesses = processStore.processes.some((process) => String(process.clientId) === String(client.id));
-        const hasProjects = projectStore.projects.some((project) => String(project.clientId) === String(client.id));
+        const hasProjects = projectStore.getProjectsByClient(client.id).length > 0;
         return hasProcesses || hasProjects;
     });
 
@@ -273,7 +282,19 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                                     return;
                                 }
                                 renderTree();
-                                renderClientOverview(clientId);
+                                currentProcessId = null;
+                                if (getClientProcessTargets(clientId).length > 0) {
+                                    renderClientOverview(clientId);
+                                } else {
+                                    const contentPanel = container.querySelector('#process-content-panel');
+                                    if (contentPanel) {
+                                        renderEmptyState(
+                                            contentPanel,
+                                            'VISUALIZADOR DE PROCESSOS',
+                                            'Nenhum processo ativo restante para este titular.'
+                                        );
+                                    }
+                                }
                             } catch (error) {
                                 showNoticeModal('Erro ao excluir', error?.message || 'Não foi possível excluir o processo.');
                             }
@@ -589,17 +610,15 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
     const initDOM = () => {
         container.innerHTML = `
             <div class="client-master-detail bounded-scroll-layout">
-                <aside class="client-master-panel" style="width: 380px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--bg-main); border-right: 1px solid var(--slate-100);">
-                    <div class="client-master-header" style="padding: 1rem 1.5rem; border-bottom: 1px solid var(--slate-100); display: flex; gap: 0.5rem; align-items: center;">
-                        <label class="client-master-search" style="flex: 1;">
-                            <span class="client-master-search-icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
-                            </span>
+                <aside class="client-master-panel">
+                    <div class="client-master-header">
+                        <label class="client-master-search">
+                            <span class="client-master-search-icon" aria-hidden="true">${searchIcon()}</span>
                             <input type="search" id="tree-search-input" value="${escapeAttribute(query)}" placeholder="Buscar processo, titular ou projeto..." />
                         </label>
-                        ${canEdit ? `<button type="button" class="client-master-add" id="btn-global-add-process" aria-label="Adicionar processo" title="Registrar Novo Processo">${addProcessIcon()}</button>` : ''}
+                        ${canEdit ? `<button type="button" class="client-master-add" id="btn-global-add-process" aria-label="Adicionar processo" title="Registrar Novo Processo">${addProcessMasterIcon()}</button>` : ''}
                     </div>
-                    <div class="custom-scrollbar" id="tree-container" style="flex: 1; overflow-y: auto; padding: 1rem 0;"></div>
+                    <div class="client-master-list custom-scrollbar" id="tree-container" style="padding: 1rem 0;"></div>
                 </aside>
                 <section class="client-detail-panel custom-scrollbar" id="process-content-panel" style="flex: 1; min-width: 0; background: var(--card-bg);"></section>
             </div>
@@ -748,8 +767,9 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
 
         if (filteredClients.length === 0) {
             treeContainer.innerHTML = `
-                <div style="padding: 2rem; text-align: center;">
-                    <p class="label-tech" style="color: var(--slate-400);">Nenhum resultado</p>
+                <div class="client-master-empty">
+                    <span class="client-master-empty-icon">${folderIcon()}</span>
+                    <p>Nenhum processo encontrado para esta busca.</p>
                 </div>
             `;
             return;
