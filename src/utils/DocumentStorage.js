@@ -39,3 +39,16 @@ export async function getDocumentAccessUrl(doc) {
     }
     return doc.base64 || null;
 }
+
+export async function deleteDocumentFile(path) {
+    if (!path) return false;
+    await supabaseStorage.deleteFile(path);
+    return true;
+}
+
+export async function deleteDocumentFiles(paths = []) {
+    const uniquePaths = [...new Set((Array.isArray(paths) ? paths : []).filter(Boolean))];
+    if (uniquePaths.length === 0) return 0;
+    await Promise.all(uniquePaths.map((path) => deleteDocumentFile(path)));
+    return uniquePaths.length;
+}

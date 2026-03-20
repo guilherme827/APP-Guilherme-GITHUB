@@ -1,9 +1,15 @@
 const { defineConfig, loadEnv } = require('vite');
 const accountHandler = require('./server/accountHandler.cjs');
+const adminBackupHandler = require('./server/adminBackupHandler.cjs');
+const activityLogsHandler = require('./server/activityLogsHandler.cjs');
 const aiAnalyzeHandler = require('./server/aiAnalyzeHandler.cjs');
+const clientsHandler = require('./server/clientsHandler.cjs');
 const loginSupportHandler = require('./server/loginSupportHandler.cjs');
 const organizationsHandler = require('./server/organizationsHandler.cjs');
+const processesHandler = require('./server/processesHandler.cjs');
+const projectsHandler = require('./server/projectsHandler.cjs');
 const teamMembersHandler = require('./server/teamMembersHandler.cjs');
+const trashHandler = require('./server/trashHandler.cjs');
 
 function teamMembersPlugin(env) {
     return {
@@ -12,11 +18,29 @@ function teamMembersPlugin(env) {
             server.middlewares.use('/api/account', async (req, res) => {
                 await accountHandler(req, res, env);
             });
+            server.middlewares.use('/api/admin-backup', async (req, res) => {
+                await adminBackupHandler(req, res, env);
+            });
+            server.middlewares.use('/api/activity-logs', async (req, res) => {
+                await activityLogsHandler(req, res, env);
+            });
+            server.middlewares.use('/api/clients', async (req, res) => {
+                await clientsHandler(req, res, env);
+            });
             server.middlewares.use('/api/team-members', async (req, res) => {
                 await teamMembersHandler(req, res, env);
             });
             server.middlewares.use('/api/organizations', async (req, res) => {
                 await organizationsHandler(req, res, env);
+            });
+            server.middlewares.use('/api/processes', async (req, res) => {
+                await processesHandler(req, res, env);
+            });
+            server.middlewares.use('/api/projects', async (req, res) => {
+                await projectsHandler(req, res, env);
+            });
+            server.middlewares.use('/api/trash', async (req, res) => {
+                await trashHandler(req, res, env);
             });
             server.middlewares.use('/api/ai-analyze', async (req, res) => {
                 await aiAnalyzeHandler(req, res, env);

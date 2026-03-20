@@ -1,7 +1,5 @@
-import { supabase } from '../lib/supabaseClient.js';
 import { getActiveOrganizationId } from '../app/organizationContext.js';
 import { authService } from './AuthService.js';
-import { activityLogger } from './ActivityLogger.js';
 
 function getCurrentOrganizationId() {
     return getActiveOrganizationId();
@@ -9,6 +7,23 @@ function getCurrentOrganizationId() {
 
 function getSupabaseMessage(error, fallback) {
     return error?.message || fallback;
+}
+
+async function fetchTrashApi(path = '', options = {}) {
+    const accessToken = await authService.getAccessToken();
+    const response = await fetch(`/api/trash${path}`, {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+            ...(options.headers || {})
+        }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(getSupabaseMessage(payload, 'Falha na API da lixeira.'));
+    }
+    return payload?.data;
 }
 
 class TrashStore {
@@ -21,19 +36,7 @@ class TrashStore {
         if (this.isLoaded && !force) return;
         const orgId = getCurrentOrganizationId();
         if (!orgId) return;
-
-        const { data, error } = await supabase
-            .from('trash')
-            .select('*')
-            .eq('organization_id', orgId)
-            .order('deleted_at', { ascending: false });
-
-        if (error) {
-            console.error('[TrashStore] Erro ao carregar lixeira:', error);
-            return;
-        }
-
-        this.items = data || [];
+        this.items = await fetchTrashApi('', { method: 'GET' });
         this.isLoaded = true;
     }
 
@@ -47,33 +50,29 @@ class TrashStore {
      * @param {string[]} [options.storage_paths] - Caminhos dos arquivos no Storage
      */
     async sendToTrash({ item_type, item_id, item_label, item_data, storage_paths = [] }) {
-        const orgId = getCurrentOrganizationId();
-        const session = await authService.getSession().catch(() => null);
-        const userId = session?.user?.id || null;
-
-        const payload = {
-            organization_id: orgId,
-            item_type,
-            item_id: String(item_id),
-            item_label,
-            item_data,
-            storage_paths,
-            deleted_by: userId,
-            deleted_at: new Date().toISOString()
-        };
-
-        const { data, error } = await supabase
-            .from('trash')
-            .insert(payload)
-            .select()
-            .single();
-
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Não foi possível mover o item para a lixeira.'));
-        }
+        const data = await fetchTrashApi('', {
+            method: 'POST',
+            body: JSON.stringify({
+                item_type,
+                item_id: String(item_id),
+                item_label,
+                item_data,
+                storage_paths
+            })
+        });
 
         this.items = [data, ...this.items];
         return data;
+    }
+
+    async moveToTrash({ item_type, item_id, item_name, original_data, storage_paths = [] }) {
+        return this.sendToTrash({
+            item_type,
+            item_id,
+            item_label: item_name,
+            item_data: original_data,
+            storage_paths
+        });
     }
 
     /**
@@ -85,72 +84,12 @@ class TrashStore {
     async permanentlyDelete(trashId) {
         const trashItem = this.items.find(item => String(item.id) === String(trashId));
         if (!trashItem) throw new Error('Item não encontrado na lixeira.');
-
-        // 1. Remove arquivos físicos do Storage
-        const storagePaths = Array.isArray(trashItem.storage_paths) ? trashItem.storage_paths : [];
-        const validPaths = storagePaths.filter(p => p && typeof p === 'string' && p.length > 0);
-        if (validPaths.length > 0) {
-            const { error: storageError } = await supabase.storage
-                .from('documentos')
-                .remove(validPaths);
-
-            if (storageError) {
-                console.warn('[TrashStore] Aviso: alguns arquivos não puderam ser removidos do Storage:', storageError);
-                // Continua mesmo com erro no storage para não bloquear a limpeza
-            }
-        }
-
-        // 2. Deleta o registro original do banco (o item real ainda existe pois fizemos soft delete)
-        const orgId = getCurrentOrganizationId();
-        if (trashItem.item_type === 'processo') {
-            const { error: dbError } = await supabase
-                .from('processes')
-                .delete()
-                .eq('id', trashItem.item_id)
-                .eq('organization_id', orgId);
-            if (dbError) {
-                console.warn('[TrashStore] Aviso ao deletar processo do banco:', dbError);
-            }
-        } else if (trashItem.item_type === 'titular') {
-            const { error: dbError } = await supabase
-                .from('clients')
-                .delete()
-                .eq('id', trashItem.item_id)
-                .eq('organization_id', orgId);
-            if (dbError) {
-                console.warn('[TrashStore] Aviso ao deletar titular do banco:', dbError);
-            }
-        } else if (trashItem.item_type === 'projeto') {
-            const { error: dbError } = await supabase
-                .from('projects')
-                .delete()
-                .eq('id', trashItem.item_id)
-                .eq('organization_id', orgId);
-            if (dbError) {
-                console.warn('[TrashStore] Aviso ao deletar projeto do banco:', dbError);
-            }
-        }
-
-        // 3. Remove da tabela trash
-        const { error } = await supabase
-            .from('trash')
-            .delete()
-            .eq('id', trashId);
-
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Não foi possível remover o item da lixeira.'));
-        }
+        await fetchTrashApi('', {
+            method: 'DELETE',
+            body: JSON.stringify({ id: trashId })
+        });
 
         this.items = this.items.filter(item => String(item.id) !== String(trashId));
-
-        // Registro de atividade
-        const typeMap = { 'processo': 'PROCESSO', 'titular': 'TITULAR', 'projeto': 'PROJETO' };
-        activityLogger.logAction({
-            action_type: 'PERMANENT_DELETE',
-            entity_type: typeMap[trashItem.item_type] || 'DESCONHECIDO',
-            entity_id: trashItem.item_id,
-            entity_label: trashItem.item_label
-        });
 
         return true;
     }
@@ -160,30 +99,12 @@ class TrashStore {
      * O registro original nunca foi deletado (soft delete), então volta a aparecer nas listas.
      */
     async restoreItem(trashId) {
-        // Precisamos localizar o item antes para saber os dados pro Log
-        const trashItem = this.items.find(item => String(item.id) === String(trashId));
-
-        const { error } = await supabase
-            .from('trash')
-            .delete()
-            .eq('id', trashId);
-
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Não foi possível restaurar o item.'));
-        }
+        await fetchTrashApi('', {
+            method: 'PATCH',
+            body: JSON.stringify({ id: trashId })
+        });
 
         this.items = this.items.filter(item => String(item.id) !== String(trashId));
-
-        // Registro de atividade
-        if (trashItem) {
-            const typeMap = { 'processo': 'PROCESSO', 'titular': 'TITULAR', 'projeto': 'PROJETO' };
-            activityLogger.logAction({
-                action_type: 'RESTORE',
-                entity_type: typeMap[trashItem.item_type] || 'DESCONHECIDO',
-                entity_id: trashItem.item_id,
-                entity_label: trashItem.item_label
-            });
-        }
 
         return true;
     }
@@ -192,21 +113,11 @@ class TrashStore {
      * Esvazia toda a lixeira permanentemente.
      */
     async emptyAll() {
-        const allItems = [...this.items];
-        const errors = [];
-
-        for (const item of allItems) {
-            try {
-                await this.permanentlyDelete(item.id);
-            } catch (err) {
-                console.error('[TrashStore] Erro ao esvaziar item:', item.id, err);
-                errors.push(item.id);
-            }
-        }
-
-        if (errors.length > 0) {
-            throw new Error(`${errors.length} item(s) não puderam ser removidos permanentemente.`);
-        }
+        await fetchTrashApi('', {
+            method: 'DELETE',
+            body: JSON.stringify({ empty_all: true })
+        });
+        this.items = [];
         return true;
     }
 

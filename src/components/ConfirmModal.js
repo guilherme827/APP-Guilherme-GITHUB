@@ -47,9 +47,20 @@ export function showConfirmModal(title, message, onConfirm) {
     };
 
     backdrop.querySelector('#confirm-cancel').onclick = close;
-    backdrop.querySelector('#confirm-yes').onclick = () => {
-        onConfirm();
-        close();
+    backdrop.querySelector('#confirm-yes').onclick = async () => {
+        const confirmButton = backdrop.querySelector('#confirm-yes');
+        const cancelButton = backdrop.querySelector('#confirm-cancel');
+        confirmButton.disabled = true;
+        cancelButton.disabled = true;
+        confirmButton.textContent = 'EXCLUINDO...';
+        try {
+            await onConfirm();
+            close();
+        } catch {
+            confirmButton.disabled = false;
+            cancelButton.disabled = false;
+            confirmButton.textContent = 'EXCLUIR';
+        }
     };
 
     // Close on backdrop click

@@ -3,6 +3,7 @@ import { renderHeader, initHeaderMenu } from './components/Header.js';
 import { renderDock, initDock } from './components/Dock.js';
 import { processStore } from './utils/ProcessStore.js';
 import { clientStore } from './utils/ClientStore.js';
+import { projectStore } from './utils/ProjectStore.js';
 import { authService } from './utils/AuthService.js';
 import { profileService } from './utils/ProfileService.js';
 import { showNoticeModal } from './components/NoticeModal.js';
@@ -401,15 +402,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         let clientLoadResult;
         let processLoadResult;
+        let projectLoadResult;
         if (e2eOverrides) {
             hydrateStoresFromE2E(e2eOverrides);
             installE2EStoreAdapters();
             clientLoadResult = { status: 'fulfilled' };
             processLoadResult = { status: 'fulfilled' };
+            projectLoadResult = { status: 'fulfilled' };
         } else {
-            [clientLoadResult, processLoadResult] = await Promise.allSettled([
+            [clientLoadResult, processLoadResult, projectLoadResult] = await Promise.allSettled([
                 clientStore.load(!state.hasRenderedProtectedApp),
-                processStore.load(!state.hasRenderedProtectedApp)
+                processStore.load(!state.hasRenderedProtectedApp),
+                projectStore.load(!state.hasRenderedProtectedApp)
             ]);
         }
 
@@ -421,6 +425,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (processLoadResult.status === 'rejected') {
             authLog('renderRoute:process-load-failed', processLoadResult.reason?.message || processLoadResult.reason);
             processStore.reset();
+        }
+
+        if (projectLoadResult.status === 'rejected') {
+            authLog('renderRoute:project-load-failed', projectLoadResult.reason?.message || projectLoadResult.reason);
+            projectStore.reset();
         }
 
         if (!hasAdminAccess(state.currentProfile)) {
@@ -993,7 +1002,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             const renderList = (restoreClientId = null, restoreProjectId = null) => {
                 renderProcessList(container, actionsContainer,
-                    (clientId) => showAddProcess(container, actionsContainer, renderList, clientId),
+                    (clientId, projectId) => showAddProcess(container, actionsContainer, renderList, clientId, projectId),
                     (processId, clientId, projectId, action) => {
                         if (action === 'edit') {
                             showEditProcess(
@@ -1019,8 +1028,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         async function showProcessDetails(container, actionsContainer, processId, clientId, projectId, renderList) {
             const { renderProcessDetails } = await loadProcessDetailsModule();
-            container.innerHTML = '';
             actionsContainer.innerHTML = '';
+            const contentPanel = container.querySelector('#process-content-panel') || container;
+            contentPanel.innerHTML = '';
 
             const onNavigate = {
                 toProcessList: () => renderList(clientId, projectId),
@@ -1029,7 +1039,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 toEdit: (pid) => showEditProcess(container, actionsContainer, pid, () => showProcessDetails(container, actionsContainer, pid, clientId, projectId, renderList))
             };
 
-            renderProcessDetails(container, actionsContainer, processId, onNavigate);
+            renderProcessDetails(contentPanel, actionsContainer, processId, onNavigate);
         }
 
         async function showEditProcess(container, actionsContainer, processId, onComplete) {
@@ -1037,10 +1047,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!process) return;
             const { renderProcessForm } = await loadProcessFormModule();
 
-            container.innerHTML = '';
             actionsContainer.innerHTML = '';
+            const contentPanel = container.querySelector('#process-content-panel') || container;
+            contentPanel.innerHTML = '';
 
-            renderProcessForm(container, (updatedData) => {
+            renderProcessForm(contentPanel, (updatedData) => {
                 processStore.updateProcess(processId, updatedData)
                     .then((wasUpdated) => {
                         if (!wasUpdated) {
@@ -1056,18 +1067,19 @@ document.addEventListener('DOMContentLoaded', async () => {
             }, onComplete, process);
         }
 
-        async function showAddProcess(container, actionsContainer, onComplete, clientId = null) {
+        async function showAddProcess(container, actionsContainer, onComplete, clientId = null, projectId = null) {
             const { renderProcessForm } = await loadProcessFormModule();
-            container.innerHTML = '';
             actionsContainer.innerHTML = '';
-            renderProcessForm(container, async (data) => {
+            const contentPanel = container.querySelector('#process-content-panel') || container;
+            contentPanel.innerHTML = '';
+            renderProcessForm(contentPanel, async (data) => {
                 try {
                     const createdProcess = await processStore.addProcess(data);
                     onComplete(createdProcess?.clientId || null, createdProcess?.projectId || null);
                 } catch (error) {
                     showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível salvar o processo.');
                 }
-            }, onComplete, null, clientId);
+            }, onComplete, null, clientId, projectId);
         }
 
         async function renderClientesView(container, actionsContainer, navigationId = navigationSequence) {
@@ -1147,7 +1159,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        if (event === 'SIGNED_IN' && state.currentSession?.user?.id === session?.user?.id && state.hasRenderedProtectedApp) {
+        if (event === 'SIGNED_IN' && state.currentSession?.user?.id === session?.user?.id && state.currentSession !== null && state.hasRenderedProtectedApp) {
             state.currentSession = session;
             authLog('ignoring redundant SIGNED_IN for same user');
             return;
@@ -1170,6 +1182,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             state.currentOrganizationLoaded = false;
             clientStore.reset();
             processStore.reset();
+            projectStore.reset();
             resetActiveOrganizationId();
             state.hasRenderedProtectedApp = false;
             state.currentSection = 'painel';

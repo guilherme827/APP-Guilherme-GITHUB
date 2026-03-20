@@ -4,10 +4,12 @@ import { projectStore } from '../utils/ProjectStore.js';
 import { AIService } from '../utils/AIService.js';
 import { showNoticeModal } from './NoticeModal.js';
 import { escapeHtml } from '../utils/sanitize.js';
-import { uploadDocumentFile } from '../utils/DocumentStorage.js';
+import { deleteDocumentFiles, uploadDocumentFile } from '../utils/DocumentStorage.js';
 
-export function renderProcessForm(container, onSave, onCancel, editData = null, initialClientId = null) {
+export function renderProcessForm(container, onSave, onCancel, editData = null, initialClientId = null, initialProjectId = null) {
     let step = editData ? 3 : 1; // 1: Upload, 2: AI Reading, 3: Form
+    const pendingUploadPaths = new Set();
+    const originalPersistedPaths = new Set();
     const hasPrimaryDocument = () => !!(formData.docStoragePath);
     const getNormalizedPhase = (numeroTitulo) => (String(numeroTitulo || '').trim() ? 'Título' : 'Requerimento');
     const getInitialEventTypeForPhase = (phase) => (phase === 'Título' ? 'titulo' : 'protocolo');
@@ -80,7 +82,7 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
 
     let formData = editData || {
         clientId: initialClientId || '',
-        projectId: '',
+        projectId: initialProjectId || '',
         fase: 'Requerimento',
         tipo: '',
         tipoSigla: '',
@@ -117,6 +119,80 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
         };
     }
 
+    const collectReferencedStoragePaths = (data) => {
+        const paths = new Set();
+        if (data?.docStoragePath) paths.add(data.docStoragePath);
+        (Array.isArray(data?.events) ? data.events : []).forEach((event) => {
+            (Array.isArray(event?.documents) ? event.documents : []).forEach((doc) => {
+                const path = doc?.storagePath || doc?.storage_path;
+                if (path) paths.add(path);
+            });
+        });
+        return paths;
+    };
+
+    collectReferencedStoragePaths(formData).forEach((path) => originalPersistedPaths.add(path));
+
+    const unregisterReferencedPendingPaths = () => {
+        const referenced = collectReferencedStoragePaths(formData);
+        referenced.forEach((path) => pendingUploadPaths.delete(path));
+    };
+
+    const cleanupPendingUploads = async () => {
+        const paths = [...pendingUploadPaths];
+        pendingUploadPaths.clear();
+        if (paths.length === 0) return;
+        try {
+            await deleteDocumentFiles(paths);
+        } catch (error) {
+            console.error('[ProcessForm] Falha ao limpar uploads pendentes:', error);
+        }
+    };
+
+    const cleanupObsoletePersistedUploads = async () => {
+        const currentPaths = collectReferencedStoragePaths(formData);
+        const obsoletePaths = [...originalPersistedPaths].filter((path) => !currentPaths.has(path));
+        if (obsoletePaths.length === 0) return;
+        try {
+            await deleteDocumentFiles(obsoletePaths);
+        } catch (error) {
+            console.error('[ProcessForm] Falha ao limpar uploads antigos substituídos:', error);
+        }
+    };
+
+    const cleanupAndCancel = async () => {
+        await cleanupPendingUploads();
+        onCancel();
+    };
+
+    const registerUploadedPath = (path) => {
+        if (path) pendingUploadPaths.add(path);
+    };
+
+    const removePathFromFormIfPresent = async (pathToRemove) => {
+        if (!pathToRemove) return;
+        const referencedElsewhere = (() => {
+            let occurrences = 0;
+            if (formData.docStoragePath === pathToRemove) occurrences += 1;
+            (Array.isArray(formData.events) ? formData.events : []).forEach((event) => {
+                (Array.isArray(event.documents) ? event.documents : []).forEach((doc) => {
+                    const path = doc?.storagePath || doc?.storage_path;
+                    if (path === pathToRemove) occurrences += 1;
+                });
+            });
+            return occurrences > 1;
+        })();
+
+        if (pendingUploadPaths.has(pathToRemove) && !referencedElsewhere) {
+            pendingUploadPaths.delete(pathToRemove);
+            try {
+                await deleteDocumentFiles([pathToRemove]);
+            } catch (error) {
+                console.error('[ProcessForm] Falha ao remover upload temporário descartado:', error);
+            }
+        }
+    };
+
     const render = (file = null) => {
         container.innerHTML = '';
         if (step === 1) renderUploadStep();
@@ -148,7 +224,9 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
         const processSelectedFile = async (file) => {
             if (!file) return;
             try {
+                await removePathFromFormIfPresent(formData.docStoragePath);
                 const uploadedDoc = await uploadDocumentFile(file, 'processos', formData.clientId || 'temp');
+                registerUploadedPath(uploadedDoc.storagePath || '');
                 formData.docStoragePath = uploadedDoc.storagePath || '';
                 formData.docSize = uploadedDoc.size || 0;
                 formData.docName = uploadedDoc.name || file.name;
@@ -186,9 +264,7 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
         });
 
         container.querySelector('#btn-skip-upload').onclick = () => { step = 3; render(); };
-        container.querySelector('#btn-cancel-upload').onclick = () => {
-            onCancel();
-        };
+        container.querySelector('#btn-cancel-upload').onclick = cleanupAndCancel;
     };
 
     const renderAISimulation = async (file) => {
@@ -802,8 +878,13 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
                 if (!file || !formData.events[idx]) return;
                 
                 try {
-                    const doc = await uploadDocumentFile(file, 'eventos', formData.clientId || 'temp');
                     const event = formData.events[idx];
+                    const previousPath = isInitialEvent(event)
+                        ? formData.docStoragePath
+                        : (Array.isArray(event.documents) ? (event.documents[0]?.storagePath || '') : '');
+                    await removePathFromFormIfPresent(previousPath);
+                    const doc = await uploadDocumentFile(file, 'eventos', formData.clientId || 'temp');
+                    registerUploadedPath(doc.storagePath || '');
                     if (isInitialEvent(event)) {
                         formData.docBase64 = '';
                         formData.docStoragePath = doc.storagePath || '';
@@ -822,17 +903,20 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
         });
 
         container.querySelectorAll('.extract-remove-file-btn').forEach((btn) => {
-            btn.onclick = () => {
+            btn.onclick = async () => {
                 const idx = Number(btn.dataset.index);
                 const docId = String(btn.dataset.docId || '');
                 const event = formData.events[idx];
                 if (!event) return;
                 if (isInitialEvent(event)) {
+                    await removePathFromFormIfPresent(formData.docStoragePath);
                     formData.docBase64 = '';
                     formData.docStoragePath = '';
                     formData.docName = '';
                     formData.docType = '';
                 } else {
+                    const removedDoc = (event.documents || []).find((doc) => String(doc.id) === docId);
+                    await removePathFromFormIfPresent(removedDoc?.storagePath || removedDoc?.storage_path || '');
                     event.documents = (event.documents || []).filter((doc) => String(doc.id) !== docId);
                 }
                 render();
@@ -903,45 +987,83 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
             });
         };
 
-        container.querySelector('#btn-cancel').onclick = () => onCancel();
+        container.querySelector('#btn-cancel').onclick = cleanupAndCancel;
 
         form.onsubmit = async (e) => {
             e.preventDefault();
-            const clientId = container.querySelector('#client-id-hidden').value;
-            if (!clientId) {
-                showNoticeModal('Validação', 'Por favor, selecione um titular cadastrado.');
-                return;
+            const submitButton = form.querySelector('button[type="submit"]');
+            const originalSubmitLabel = submitButton?.textContent || 'SALVAR';
+
+            try {
+                if (submitButton) {
+                    submitButton.disabled = true;
+                    submitButton.textContent = 'SALVANDO...';
+                }
+
+                const clientId = container.querySelector('#client-id-hidden').value;
+                if (!clientId) {
+                    showNoticeModal('Validação', 'Por favor, selecione um titular cadastrado.');
+                    return;
+                }
+
+                const data = Object.fromEntries(new FormData(form).entries());
+                
+                // Collect deadlines
+                data.deadlines = (formData.deadlines || []).map((item) => ({
+                    reference: item.reference || '',
+                    desc: item.desc || '',
+                    date: item.date || '',
+                    id: item.id || null,
+                    status: item.status || 'pending'
+                }));
+
+                // Project handling
+                data.projectId = container.querySelector('#project-id-hidden').value || null;
+                data.projectName = container.querySelector('#project-search-input').value || null;
+                const normalizedProjectName = String(data.projectName || '').trim();
+                if (normalizedProjectName && !data.projectId) {
+                    const existingProject = projectStore.getProjectsByClient(Number(clientId)).find((project) =>
+                        String(project.name || '').trim().toLowerCase() === normalizedProjectName.toLowerCase()
+                    );
+                    if (existingProject) {
+                        data.projectId = existingProject.id;
+                        data.projectName = existingProject.name;
+                    } else {
+                        const createdProject = await projectStore.addProject({
+                            clientId: Number(clientId),
+                            name: normalizedProjectName
+                        });
+                        data.projectId = createdProject.id;
+                        data.projectName = createdProject.name;
+                    }
+                }
+                data.orgao = data.orgaoNomeCompleto
+                    ? `${data.orgaoNomeCompleto}${data.orgaoSigla ? ` - ${data.orgaoSigla}` : ''}`
+                    : (data.orgaoSigla || '');
+                data.fase = String(data.numeroTitulo || '').trim() ? 'Título' : 'Requerimento';
+                data.area = formatAreaHectares(data.area);
+
+                // Merge document data
+                data.docBase64 = formData.docBase64 || '';
+                data.docStoragePath = formData.docStoragePath || '';
+                data.docSize = formData.docSize || 0;
+                data.docName = formData.docName || '';
+                data.docType = formData.docType || '';
+                data.events = formData.events || [];
+
+                await onSave(data);
+                unregisterReferencedPendingPaths();
+                await cleanupPendingUploads();
+                await cleanupObsoletePersistedUploads();
+            } catch (error) {
+                console.error('[ProcessForm] Falha ao salvar processo:', error);
+                showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível salvar o processo.');
+            } finally {
+                if (submitButton) {
+                    submitButton.disabled = false;
+                    submitButton.textContent = originalSubmitLabel;
+                }
             }
-
-            const data = Object.fromEntries(new FormData(form).entries());
-            
-            // Collect deadlines
-            data.deadlines = (formData.deadlines || []).map((item) => ({
-                reference: item.reference || '',
-                desc: item.desc || '',
-                date: item.date || '',
-                id: item.id || null,
-                status: item.status || 'pending'
-            }));
-
-            // Project handling
-            data.projectId = container.querySelector('#project-id-hidden').value || null;
-            data.projectName = container.querySelector('#project-search-input').value || null;
-            data.orgao = data.orgaoNomeCompleto
-                ? `${data.orgaoNomeCompleto}${data.orgaoSigla ? ` - ${data.orgaoSigla}` : ''}`
-                : (data.orgaoSigla || '');
-            data.fase = String(data.numeroTitulo || '').trim() ? 'Título' : 'Requerimento';
-            data.area = formatAreaHectares(data.area);
-
-            // Merge document data
-            data.docBase64 = formData.docBase64 || '';
-            data.docStoragePath = formData.docStoragePath || '';
-            data.docSize = formData.docSize || 0;
-            data.docName = formData.docName || '';
-            data.docType = formData.docType || '';
-            data.events = formData.events || [];
-
-            onSave(data);
         };
     };
 

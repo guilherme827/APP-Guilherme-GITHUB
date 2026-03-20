@@ -3,6 +3,7 @@ import { mapClientModelToRow, mapClientRowToModel } from './supabaseMappers.js';
 import { getActiveOrganizationId } from '../app/organizationContext.js';
 import { trashStore } from './TrashStore.js';
 import { activityLogger } from './ActivityLogger.js';
+import { authService } from './AuthService.js';
 
 function getSupabaseMessage(error, fallback) {
     return error?.message || fallback;
@@ -10,6 +11,24 @@ function getSupabaseMessage(error, fallback) {
 
 function getCurrentOrganizationId() {
     return getActiveOrganizationId();
+}
+
+async function fetchClientsApi(options = {}) {
+    const accessToken = await authService.getAccessToken();
+    const response = await fetch('/api/clients', {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+            ...(options.headers || {})
+        }
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload?.error || getSupabaseMessage(payload, 'Falha na API de titulares.'));
+    }
+    return payload?.data;
 }
 
 export class ClientStore {
@@ -31,15 +50,7 @@ export class ClientStore {
 
         const trashedIds = new Set((trashedData || []).map(r => String(r.item_id)));
 
-        const { data, error } = await supabase
-            .from('clients')
-            .select('*')
-            .eq('organization_id', organizationId)
-            .order('id', { ascending: true });
-
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Falha ao carregar titulares no Supabase.'));
-        }
+        const data = await fetchClientsApi({ method: 'GET' });
 
         // Filtra os que estão na lixeira
         this.clients = (data || [])
@@ -102,15 +113,10 @@ export class ClientStore {
             documents: client.documents || []
         });
 
-        const { data, error } = await supabase
-            .from('clients')
-            .insert(payload)
-            .select()
-            .single();
-
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Não foi possível criar o titular.'));
-        }
+        const data = await fetchClientsApi({
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
 
         const created = mapClientRowToModel(data);
         this.clients.push(created);
@@ -134,17 +140,13 @@ export class ClientStore {
             organizationId: getCurrentOrganizationId()
         });
 
-        const { data, error } = await supabase
-            .from('clients')
-            .update(payload)
-            .eq('id', id)
-            .eq('organization_id', getCurrentOrganizationId())
-            .select()
-            .single();
-
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Não foi possível atualizar o titular.'));
-        }
+        const data = await fetchClientsApi({
+            method: 'PATCH',
+            body: JSON.stringify({
+                id,
+                ...payload
+            })
+        });
 
         const updated = mapClientRowToModel(data);
         this.clients = this.clients.map((client) => (String(client.id) === String(id) ? updated : client));
@@ -162,41 +164,16 @@ export class ClientStore {
     }
 
     async deleteClient(id) {
-        // Verifica processos vinculados antes de qualquer ação
-        const { count, error: countError } = await supabase
-            .from('processes')
-            .select('id', { count: 'exact', head: true })
-            .eq('client_id', id)
-            .eq('organization_id', getCurrentOrganizationId());
-
-        if (countError) {
-            throw new Error(getSupabaseMessage(countError, 'Não foi possível validar vínculos do titular.'));
-        }
-
-        if ((count || 0) > 0) {
-            throw new Error('Não é possível excluir: titular possui processos ou extratos vinculados.');
-        }
-
-        // Captura o objeto completo do titular para arquivar na lixeira
         const client = this.clients.find(c => String(c.id) === String(id));
         if (!client) throw new Error('Titular não encontrado.');
-
-        // Coleta os storagePaths de documentos do titular
-        const storagePaths = (client.documents || [])
-            .map(doc => doc.storagePath || doc.storage_path)
-            .filter(p => p && typeof p === 'string' && p.length > 0);
 
         const label = client.type === 'PF'
             ? (client.nome || 'Titular sem nome')
             : (client.nomeFantasia || client.nomeEmpresarial || 'Empresa sem nome');
 
-        // Envia para a lixeira (soft delete — o registro real permanece no banco)
-        await trashStore.sendToTrash({
-            item_type: 'titular',
-            item_id: id,
-            item_label: label,
-            item_data: client,
-            storage_paths: storagePaths
+        await fetchClientsApi({
+            method: 'DELETE',
+            body: JSON.stringify({ id })
         });
 
         // Remove do array local imediatamente (some da tela)

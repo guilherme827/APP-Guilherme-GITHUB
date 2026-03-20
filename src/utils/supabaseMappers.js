@@ -94,11 +94,12 @@ export function mapProjectModelToRow(project) {
 
 export function mapProcessRowToModel(row) {
     const projectName = normalizeProjectName(row.project_name);
+    const derivedProjectId = buildProjectId(row.client_id, projectName);
     return {
         id: row.id,
         organizationId: row.organization_id || null,
         clientId: row.client_id,
-        projectId: row.project_id || null,
+        projectId: derivedProjectId,
         projectName,
         fase: row.fase || 'Requerimento',
         tipo: row.tipo || '',
@@ -128,7 +129,6 @@ export function mapProcessModelToRow(process, resolvedProjectName = '') {
     return {
         organization_id: process.organizationId || null,
         client_id: Number(process.clientId),
-        project_id: process.projectId || null,
         project_name: normalizeProjectName(resolvedProjectName),
         fase: process.fase || 'Requerimento',
         tipo: process.tipo || '',

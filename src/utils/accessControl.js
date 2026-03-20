@@ -51,7 +51,7 @@ export function hasSuperAdminAccess(profile) {
 }
 
 export function hasOfficeAdminAccess(profile) {
-    return profile?.role === ROLE_ADMIN;
+    return profile?.role === ROLE_ADMIN || profile?.role === 'adm';
 }
 
 export function hasAdminAccess(profile) {
@@ -68,11 +68,13 @@ export function canViewSection(profile, sectionId, enabledModules = null) {
     if (sectionId === 'admin-panel') {
         return hasOfficeAdminAccess(profile);
     }
+    // Admin sempre tem acesso a todos os módulos da organização
+    if (hasOfficeAdminAccess(profile)) return true;
+    // Usuários comuns: respeita os módulos habilitados e as pastas do perfil
     const organizationModules = normalizeOrganizationModules(enabledModules);
     if (!organizationModules.includes(sectionId)) {
         return false;
     }
-    if (hasOfficeAdminAccess(profile)) return true;
     const permissions = normalizePermissions(profile?.permissions);
     const folders = normalizeFolderAccess(profile?.folder_access);
     return permissions.view && folders.includes(sectionId);

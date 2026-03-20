@@ -5,14 +5,8 @@ import { showNoticeModal } from './NoticeModal.js';
 import { escapeHtml } from '../utils/sanitize.js';
 
 export function renderClientList(container, actionsContainer, onEdit, onAdd, options = {}) {
-    const clients = clientStore.getClients();
     const canEdit = options.canEdit !== false;
     const canDelete = options.canDelete === true;
-    const displayClients = clients.map((client) => ({
-        ...client,
-        status: 'Ativo',
-        isMock: false
-    }));
 
     const state = {
         query: '',
@@ -47,6 +41,11 @@ export function renderClientList(container, actionsContainer, onEdit, onAdd, opt
             uiState.shouldRestoreSearchFocus = false;
         }
 
+        const displayClients = clientStore.getClients().map((client) => ({
+            ...client,
+            status: 'Ativo',
+            isMock: false
+        }));
         const filteredClients = filterClients(displayClients, state.query);
         if (!filteredClients.some((client) => String(client.id) === String(state.selectedId))) {
             state.selectedId = null;

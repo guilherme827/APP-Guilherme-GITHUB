@@ -1,0 +1,325 @@
+const { createClient } = require('@supabase/supabase-js');
+
+function sendJson(res, statusCode, payload) {
+    res.statusCode = statusCode;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify(payload));
+}
+
+function parseBody(req) {
+    return new Promise((resolve, reject) => {
+        let raw = '';
+        req.on('data', (chunk) => {
+            raw += String(chunk || '');
+        });
+        req.on('end', () => {
+            if (!raw) {
+                resolve({});
+                return;
+            }
+            try {
+                resolve(JSON.parse(raw));
+            } catch (error) {
+                reject(error);
+            }
+        });
+        req.on('error', reject);
+    });
+}
+
+function getClients(env) {
+    const supabaseUrl = String(env.VITE_SUPABASE_URL || '').trim();
+    const supabaseAnonKey = String(env.VITE_SUPABASE_ANON_KEY || '').trim();
+    const serviceRoleKey = String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+
+    if (!supabaseUrl || !supabaseAnonKey || !serviceRoleKey) {
+        throw new Error('VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY e SUPABASE_SERVICE_ROLE_KEY precisam estar configuradas no servidor.');
+    }
+
+    return {
+        anonClient: createClient(supabaseUrl, supabaseAnonKey, { auth: { persistSession: false, autoRefreshToken: false } }),
+        serviceClient: createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } })
+    };
+}
+
+async function authenticateRequester(req, env) {
+    const { anonClient, serviceClient } = getClients(env);
+    const authorization = String(req.headers.authorization || '');
+    const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+
+    if (!token) {
+        return { error: { status: 401, message: 'Token de autenticação ausente.' } };
+    }
+
+    const { data: authData, error: authError } = await anonClient.auth.getUser(token);
+    if (authError || !authData?.user) {
+        return { error: { status: 401, message: authError?.message || 'Sessão inválida.' } };
+    }
+
+    const { data: profile, error: profileError } = await serviceClient
+        .from('profiles')
+        .select('*')
+        .eq('id', authData.user.id)
+        .single();
+
+    if (profileError || !profile) {
+        return { error: { status: 403, message: profileError?.message || 'Perfil do usuário não encontrado.' } };
+    }
+
+    if (!profile.organization_id) {
+        return { error: { status: 403, message: 'Usuário sem organização vinculada.' } };
+    }
+
+    return {
+        user: authData.user,
+        profile,
+        serviceClient
+    };
+}
+
+async function handlePost(req, res, env) {
+    const auth = await authenticateRequester(req, env);
+    if (auth.error) {
+        sendJson(res, auth.error.status, { error: auth.error.message });
+        return;
+    }
+
+    let body;
+    try {
+        body = await parseBody(req);
+    } catch {
+        sendJson(res, 400, { error: 'Payload inválido.' });
+        return;
+    }
+
+    const payload = {
+        ...body,
+        organization_id: auth.profile.organization_id
+    };
+
+    const { data, error } = await auth.serviceClient
+        .from('clients')
+        .insert(payload)
+        .select('*')
+        .single();
+
+    if (error) {
+        sendJson(res, 500, { error: error.message || 'Não foi possível criar o titular.' });
+        return;
+    }
+
+    await auth.serviceClient.from('activity_logs').insert({
+        organization_id: auth.profile.organization_id,
+        user_id: auth.user.id,
+        user_name: auth.profile.full_name || auth.user.email || 'Usuário',
+        action_type: 'CREATE',
+        entity_type: 'TITULAR',
+        entity_id: String(data.id),
+        entity_label: data.type === 'PF'
+            ? (data.nome || 'Titular')
+            : (data.nome_fantasia || data.nome_empresarial || 'Empresa')
+    });
+
+    sendJson(res, 201, { data });
+}
+
+async function handleGet(req, res, env) {
+    const auth = await authenticateRequester(req, env);
+    if (auth.error) {
+        sendJson(res, auth.error.status, { error: auth.error.message });
+        return;
+    }
+
+    const { data: trashedData, error: trashedError } = await auth.serviceClient
+        .from('trash')
+        .select('item_id')
+        .eq('organization_id', auth.profile.organization_id)
+        .eq('item_type', 'titular');
+
+    if (trashedError) {
+        sendJson(res, 500, { error: trashedError.message || 'Não foi possível carregar a lixeira de titulares.' });
+        return;
+    }
+
+    const trashedIds = new Set((trashedData || []).map((row) => String(row.item_id)));
+
+    const { data, error } = await auth.serviceClient
+        .from('clients')
+        .select('*')
+        .eq('organization_id', auth.profile.organization_id)
+        .order('id', { ascending: true });
+
+    if (error) {
+        sendJson(res, 500, { error: error.message || 'Não foi possível carregar os titulares.' });
+        return;
+    }
+
+    sendJson(res, 200, { data: (data || []).filter((row) => !trashedIds.has(String(row.id))) });
+}
+
+async function handlePatch(req, res, env) {
+    const auth = await authenticateRequester(req, env);
+    if (auth.error) {
+        sendJson(res, auth.error.status, { error: auth.error.message });
+        return;
+    }
+
+    let body;
+    try {
+        body = await parseBody(req);
+    } catch {
+        sendJson(res, 400, { error: 'Payload inválido.' });
+        return;
+    }
+
+    const clientId = body?.id;
+    if (clientId == null || clientId === '') {
+        sendJson(res, 400, { error: 'ID do titular é obrigatório.' });
+        return;
+    }
+
+    const updatePayload = {
+        ...body,
+        organization_id: auth.profile.organization_id
+    };
+    delete updatePayload.id;
+
+    const { data, error } = await auth.serviceClient
+        .from('clients')
+        .update(updatePayload)
+        .eq('id', clientId)
+        .eq('organization_id', auth.profile.organization_id)
+        .select('*')
+        .single();
+
+    if (error) {
+        sendJson(res, 500, { error: error.message || 'Não foi possível atualizar o titular.' });
+        return;
+    }
+
+    await auth.serviceClient.from('activity_logs').insert({
+        organization_id: auth.profile.organization_id,
+        user_id: auth.user.id,
+        user_name: auth.profile.full_name || auth.user.email || 'Usuário',
+        action_type: 'UPDATE',
+        entity_type: 'TITULAR',
+        entity_id: String(data.id),
+        entity_label: data.type === 'PF'
+            ? (data.nome || 'Titular')
+            : (data.nome_fantasia || data.nome_empresarial || 'Empresa')
+    });
+
+    sendJson(res, 200, { data });
+}
+
+async function handleDelete(req, res, env) {
+    const auth = await authenticateRequester(req, env);
+    if (auth.error) {
+        sendJson(res, auth.error.status, { error: auth.error.message });
+        return;
+    }
+
+    let body;
+    try {
+        body = await parseBody(req);
+    } catch {
+        sendJson(res, 400, { error: 'Payload inválido.' });
+        return;
+    }
+
+    const clientId = body?.id;
+    if (clientId == null || clientId === '') {
+        sendJson(res, 400, { error: 'ID do titular é obrigatório.' });
+        return;
+    }
+
+    const { count, error: countError } = await auth.serviceClient
+        .from('processes')
+        .select('id', { count: 'exact', head: true })
+        .eq('client_id', clientId)
+        .eq('organization_id', auth.profile.organization_id);
+
+    if (countError) {
+        sendJson(res, 500, { error: countError.message || 'Não foi possível validar vínculos do titular.' });
+        return;
+    }
+
+    if ((count || 0) > 0) {
+        sendJson(res, 400, { error: 'Não é possível excluir: titular possui processos ou extratos vinculados.' });
+        return;
+    }
+
+    const { data: client, error: clientError } = await auth.serviceClient
+        .from('clients')
+        .select('*')
+        .eq('id', clientId)
+        .eq('organization_id', auth.profile.organization_id)
+        .single();
+
+    if (clientError || !client) {
+        sendJson(res, 404, { error: clientError?.message || 'Titular não encontrado.' });
+        return;
+    }
+
+    const storagePaths = (Array.isArray(client.documents) ? client.documents : [])
+        .map((doc) => doc?.storagePath || doc?.storage_path)
+        .filter((value) => value && typeof value === 'string');
+
+    const itemLabel = client.type === 'PF'
+        ? (client.nome || 'Titular sem nome')
+        : (client.nome_fantasia || client.nome_empresarial || 'Empresa sem nome');
+
+    const { error: trashError } = await auth.serviceClient
+        .from('trash')
+        .insert({
+            organization_id: auth.profile.organization_id,
+            item_type: 'titular',
+            item_id: String(clientId),
+            item_label: itemLabel,
+            item_data: client,
+            storage_paths: storagePaths,
+            deleted_by: auth.user?.id || null,
+            deleted_at: new Date().toISOString()
+        });
+
+    if (trashError) {
+        sendJson(res, 500, { error: trashError.message || 'Não foi possível mover o titular para a lixeira.' });
+        return;
+    }
+
+    await auth.serviceClient.from('activity_logs').insert({
+        organization_id: auth.profile.organization_id,
+        user_id: auth.user.id,
+        user_name: auth.profile.full_name || auth.user.email || 'Usuário',
+        action_type: 'SOFT_DELETE',
+        entity_type: 'TITULAR',
+        entity_id: String(clientId),
+        entity_label: itemLabel
+    });
+
+    sendJson(res, 200, { data: { id: clientId, item_label: itemLabel } });
+}
+
+module.exports = async function clientsHandler(req, res, env = process.env) {
+    if (req.method === 'GET') {
+        await handleGet(req, res, env);
+        return;
+    }
+
+    if (req.method === 'POST') {
+        await handlePost(req, res, env);
+        return;
+    }
+
+    if (req.method === 'PATCH') {
+        await handlePatch(req, res, env);
+        return;
+    }
+
+    if (req.method === 'DELETE') {
+        await handleDelete(req, res, env);
+        return;
+    }
+
+    sendJson(res, 405, { error: 'Método não suportado.' });
+};

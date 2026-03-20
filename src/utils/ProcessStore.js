@@ -9,6 +9,7 @@ import { getActiveOrganizationId } from '../app/organizationContext.js';
 import { trashStore } from './TrashStore.js';
 import { activityLogger } from './ActivityLogger.js';
 import { clientStore } from './ClientStore.js';
+import { authService } from './AuthService.js';
 
 function getSupabaseMessage(error, fallback) {
     return error?.message || fallback;
@@ -16,6 +17,24 @@ function getSupabaseMessage(error, fallback) {
 
 function getCurrentOrganizationId() {
     return getActiveOrganizationId();
+}
+
+async function fetchProcessesApi(options = {}) {
+    const accessToken = await authService.getAccessToken();
+    const response = await fetch('/api/processes', {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+            ...(options.headers || {})
+        }
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload?.error || getSupabaseMessage(payload, 'Falha na API de processos.'));
+    }
+    return payload?.data;
 }
 
 export class ProcessStore {
@@ -37,15 +56,7 @@ export class ProcessStore {
 
         const trashedIds = new Set((trashedData || []).map(r => String(r.item_id)));
 
-        const { data, error } = await supabase
-            .from('processes')
-            .select('*')
-            .eq('organization_id', organizationId)
-            .order('id', { ascending: true });
-
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Falha ao carregar processos no Supabase.'));
-        }
+        const data = await fetchProcessesApi({ method: 'GET' });
 
         // Filtra os que estão na lixeira e converte pro modelo frontend
         this.processes = (data || [])
@@ -309,15 +320,10 @@ export class ProcessStore {
         preparedProcess.events = this.syncInitialExtractEvent(preparedProcess);
 
         const payload = mapProcessModelToRow(preparedProcess, processData?.projectName || '');
-        const { data, error } = await supabase
-            .from('processes')
-            .insert(payload)
-            .select()
-            .single();
-
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Não foi possível salvar o processo.'));
-        }
+        const data = await fetchProcessesApi({
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
 
         const created = mapProcessRowToModel(data);
         this.processes = [...this.processes, created];
@@ -373,18 +379,13 @@ export class ProcessStore {
 
         nextProcess.events = this.syncInitialExtractEvent(nextProcess);
         const payload = mapProcessModelToRow(nextProcess, nextProcess.projectName || '');
-
-        const { data, error } = await supabase
-            .from('processes')
-            .update(payload)
-            .eq('id', id)
-            .eq('organization_id', getCurrentOrganizationId())
-            .select()
-            .single();
-
-        if (error) {
-            throw new Error(getSupabaseMessage(error, 'Não foi possível atualizar o processo.'));
-        }
+        const data = await fetchProcessesApi({
+            method: 'PATCH',
+            body: JSON.stringify({
+                id,
+                ...payload
+            })
+        });
 
         const updated = mapProcessRowToModel(data);
         this.processes = this.processes.map((process) => (String(process.id) === String(id) ? updated : process));
@@ -451,50 +452,15 @@ export class ProcessStore {
     }
 
     async deleteProcess(id) {
-        // Captura o objeto completo do processo para arquivar na lixeira
         const process = this.processes.find(p => String(p.id) === String(id));
         if (!process) throw new Error('Processo não encontrado.');
-
-        // Coleta todos os storagePaths: documento principal + documentos de eventos
-        const storagePaths = [];
-        if (process.docStoragePath) storagePaths.push(process.docStoragePath);
-        (process.events || []).forEach(event => {
-            (event.documents || []).forEach(doc => {
-                if (doc.storagePath && typeof doc.storagePath === 'string' && doc.storagePath.length > 0) {
-                    storagePaths.push(doc.storagePath);
-                }
-            });
+        await fetchProcessesApi({
+            method: 'DELETE',
+            body: JSON.stringify({ id })
         });
 
-        const client = clientStore.clients.find(c => String(c.id) === String(process.clientId));
-        const clientName = client ? (client.type === 'PF' ? client.nome : client.nomeFantasia || client.nomeEmpresarial || 'Titular') : '';
-        const label = [
-            clientName,
-            process.numeroProcesso || '',
-            process.tipo || '',
-            process.municipio || ''
-        ].filter(Boolean).join(' · ') || `Processo #${id}`;
-
-        // Envia para a lixeira (soft delete — o registro real permanece no banco)
-        await trashStore.sendToTrash({
-            item_type: 'processo',
-            item_id: id,
-            item_label: label,
-            item_data: process,
-            storage_paths: storagePaths
-        });
-
-        // Remove do array local imediatamente (some da tela)
         const changed = this.processes.some((p) => String(p.id) === String(id));
         this.processes = this.processes.filter((p) => String(p.id) !== String(id));
-
-        // Registro de atividade
-        activityLogger.logAction({
-            action_type: 'SOFT_DELETE',
-            entity_type: 'PROCESSO',
-            entity_id: id,
-            entity_label: label
-        });
 
         return changed;
     }

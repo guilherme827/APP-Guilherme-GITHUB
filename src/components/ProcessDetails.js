@@ -4,6 +4,136 @@ import { projectStore } from '../utils/ProjectStore.js';
 import { escapeHtml } from '../utils/sanitize.js';
 import { getDocumentAccessUrl } from '../utils/DocumentStorage.js';
 
+function formatProcessDate(dateStr) {
+    if (!dateStr) return '–';
+    return new Date(`${dateStr}T00:00:00`).toLocaleDateString('pt-BR');
+}
+
+function isInitialProcessEvent(event) {
+    const normalizedType = String(event?.type || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+    const normalizedDesc = String(event?.description || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+    const id = String(event?.id || '');
+    const looksInitialByText = normalizedDesc.includes('inicial') && (normalizedType === 'protocolo' || normalizedType === 'titulo');
+    return event?.isInitial === true || event?.usesProcessDocument === true || id.includes('event-inicial') || looksInitialByText;
+}
+
+async function buildExtractDocument(processId, selectedEvents = null) {
+    const process = processStore.processes.find((p) => String(p.id) === String(processId));
+    if (!process) throw new Error('Processo não encontrado.');
+
+    const client = clientStore.clients.find((c) => String(c.id) === String(process.clientId));
+    const clientName = client ? (client.type === 'PF' ? client.nome : client.nomeFantasia) : '–';
+    const project = process.projectId ? projectStore.projects.find((p) => String(p.id) === String(process.projectId)) : null;
+    const orgaoDisplay = process.orgaoDisplay || process.orgaoSigla || process.orgaoNomeCompleto || process.orgao || '—';
+    const diasProtocolado = process.dataProtocolo ? Math.max(0, Math.round((new Date() - new Date(`${process.dataProtocolo}T00:00:00`)) / (1000 * 60 * 60 * 24))) : null;
+    const generatedAt = new Date().toLocaleString('pt-BR');
+
+    const baseDocument = process.docBase64 || process.docStoragePath
+        ? {
+            id: `${process.id}-doc-inicial`,
+            name: process.docName || 'documento',
+            type: process.docType || 'application/pdf',
+            base64: process.docBase64 || '',
+            storagePath: process.docStoragePath || ''
+        }
+        : null;
+
+    const resolvedEvents = (process.events || []).map((event) => {
+        if (baseDocument && isInitialProcessEvent(event)) {
+            return { ...event, isInitial: true, documents: [{ ...baseDocument }] };
+        }
+        return event;
+    });
+
+    const events = selectedEvents || [...resolvedEvents].sort((a, b) => {
+        if (!a.date && !b.date) return 0;
+        if (!a.date) return 1;
+        if (!b.date) return -1;
+        return new Date(a.date) - new Date(b.date);
+    });
+
+    const selectedRowsByEvent = await Promise.all(events.map(async (event, index) => {
+        const includeDocs = event.includeDocs !== false;
+        const docs = includeDocs
+            ? (await Promise.all((event.documents || []).map(async (doc, docIndex) => {
+                const accessUrl = await getDocumentAccessUrl(doc);
+                const isImage = (doc.type || '').startsWith('image/');
+                const isPdf = (doc.type || '').includes('pdf');
+                const title = `${index + 1}.${docIndex + 1} ${doc.name || 'documento'}`;
+                if (!accessUrl) {
+                    return `<article style="margin-top:14px; border:1px solid #dbe3ee; border-radius:10px; overflow:hidden; padding:12px;"><p style="margin:0 0 8px; font-weight:700;">${escapeHtml(title)}</p><p style="margin:0;">Não foi possível gerar acesso ao arquivo.</p></article>`;
+                }
+                if (isImage) {
+                    return `<article style="margin-top:14px; border:1px solid #dbe3ee; border-radius:10px; overflow:hidden;"><header style="padding:10px 12px; background:#f7fafc; font-weight:700;">${escapeHtml(title)}</header><img src="${accessUrl}" alt="${escapeHtml(doc.name || 'documento')}" style="width:100%; display:block;" /></article>`;
+                }
+                if (isPdf) {
+                    return `<article style="margin-top:14px; border:1px solid #dbe3ee; border-radius:10px; overflow:hidden;"><header style="padding:10px 12px; background:#f7fafc; font-weight:700;">${escapeHtml(title)}</header><iframe src="${accessUrl}" style="width:100%; height:820px; border:none;"></iframe></article>`;
+                }
+                return `<article style="margin-top:14px; border:1px solid #dbe3ee; border-radius:10px; overflow:hidden; padding:12px;"><p style="margin:0 0 8px; font-weight:700;">${escapeHtml(title)}</p><p style="margin:0;">Tipo de arquivo não suportado para visualização incorporada.</p></article>`;
+            }))).join('')
+            : '<p style="margin-top:12px; color:#64748b;">Anexos não selecionados para este item.</p>';
+
+        return `
+            <section style="margin-top:18px; border:1px solid #dbe3ee; border-radius:12px; padding:14px;">
+                <p style="margin:0; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.12em;">Evento</p>
+                <h3 style="margin:6px 0 4px; font-size:18px;">${escapeHtml(event.description || 'Sem descrição')}</h3>
+                <p style="margin:0; color:#334155;">${escapeHtml(formatProcessDate(event.date))} • ${escapeHtml((event.type || 'movimentacao').toUpperCase())}</p>
+                ${docs || '<p style="margin-top:12px; color:#64748b;">Sem documentos anexados.</p>'}
+            </section>
+        `;
+    }));
+
+    return {
+        filename: `extrato-processo-${String(process.numeroProcesso || process.numeroTitulo || process.id).replace(/[^\w.-]+/g, '_')}.html`,
+        html: `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Extrato Processual</title>
+</head>
+<body style="font-family: Arial, sans-serif; margin: 0; padding: 24px; background: #f5f7fb; color: #0f172a;">
+  <main style="max-width: 1100px; margin: 0 auto; background: #fff; border: 1px solid #dbe3ee; border-radius: 14px; padding: 20px;">
+    <h1 style="margin: 0 0 16px;">Extrato Processual</h1>
+    <p style="margin:0 0 14px; color:#64748b;">Gerado em: ${escapeHtml(generatedAt)}</p>
+    <section style="border:1px solid #dbe3ee; border-radius:12px; padding:14px;">
+      <p style="margin:0 0 8px; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.12em;">Titular</p>
+      <p style="margin:0; font-weight:700;">${escapeHtml(clientName)}</p>
+      <p style="margin:10px 0 0; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.12em;">Órgão • Tipo • Tipologia</p>
+      <p style="margin:0;">${escapeHtml(orgaoDisplay)} • ${escapeHtml(process.tipo || '—')} • ${escapeHtml(process.tipologia || '—')}</p>
+      <p style="margin:10px 0 0; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.12em;">Projeto • Área</p>
+      <p style="margin:0;">${escapeHtml(project?.name || '—')} • ${escapeHtml(process.area || '—')}</p>
+    </section>
+    <section style="margin-top:14px; border:1px solid #dbe3ee; border-radius:12px; padding:14px;">
+      <p style="margin:0 0 8px; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.12em;">Resumo</p>
+      <p style="margin:0;">Nº Processo: ${escapeHtml(process.numeroProcesso || '—')}</p>
+      <p style="margin:2px 0 0;">Data de Protocolo: ${escapeHtml(formatProcessDate(process.dataProtocolo))} • Dias protocolado: ${diasProtocolado !== null ? `${diasProtocolado} dias` : '—'}</p>
+      <p style="margin:2px 0 0;">Nº Título/LO: ${escapeHtml(process.numeroTitulo || '—')} • Outorga: ${escapeHtml(formatProcessDate(process.dataOutorga))} • Validade: ${escapeHtml(formatProcessDate(process.dataValidade))}</p>
+    </section>
+    <section style="margin-top:14px;">
+      <h2 style="margin:0 0 6px;">Eventos selecionados (${events.length})</h2>
+      <p style="margin:0; color:#64748b;">Ordem cronológica: do mais antigo para o mais recente.</p>
+      ${selectedRowsByEvent.join('')}
+    </section>
+  </main>
+</body>
+</html>`
+    };
+}
+
+export async function downloadProcessExtract(processId) {
+    const { filename, html } = await buildExtractDocument(processId);
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
 export function renderProcessDetails(container, actionsContainer, processId, onNavigate) {
     const process = processStore.processes.find((p) => String(p.id) === String(processId));
     if (!process) {
@@ -16,32 +146,11 @@ export function renderProcessDetails(container, actionsContainer, processId, onN
     
     const project = process.projectId ? projectStore.projects.find(p => String(p.id) === String(process.projectId)) : null;
 
-    const formatDate = (dateStr) => {
-        if (!dateStr) return '–';
-        return new Date(dateStr + 'T00:00:00').toLocaleDateString('pt-BR');
-    };
+    const formatDate = formatProcessDate;
+    const isInitialEvent = isInitialProcessEvent;
 
-    const isInitialEvent = (event) => {
-        const normalizedType = String(event?.type || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
-        const normalizedDesc = String(event?.description || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
-        const id = String(event?.id || '');
-        const looksInitialByText = normalizedDesc.includes('inicial') && (normalizedType === 'protocolo' || normalizedType === 'titulo');
-        return event?.isInitial === true || event?.usesProcessDocument === true || id.includes('event-inicial') || looksInitialByText;
-    };
-
-    // Actions bar
     actionsContainer.innerHTML = '';
-    const btnEdit = document.createElement('button');
-    btnEdit.className = 'btn-pill btn-black';
-    btnEdit.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:0.5rem;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> EDITAR`;
-    btnEdit.onclick = () => onNavigate.toEdit && onNavigate.toEdit(process.id);
-    actionsContainer.appendChild(btnEdit);
-
-    const btnExportTop = document.createElement('button');
-    btnExportTop.className = 'btn-pill';
-    btnExportTop.style.cssText = 'background: var(--bg-main); color: var(--primary); border:1px solid var(--slate-200); margin-left:0.5rem;';
-    btnExportTop.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:0.5rem;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> BAIXAR EXTRATO`;
-    actionsContainer.appendChild(btnExportTop);
+    actionsContainer.style.display = 'none';
 
     // Build breadcrumb label for this process
     const procLabel = `PROCESSO ${process.tipo || ''}${process.numeroTitulo ? ' ' + process.numeroTitulo : process.numeroProcesso ? ' ' + process.numeroProcesso : ''}`.trim().toUpperCase();
@@ -400,7 +509,5 @@ export function renderProcessDetails(container, actionsContainer, processId, onN
 
         document.body.appendChild(backdrop);
     };
-
-    btnExportTop.onclick = openExtractPreview;
 
 }

@@ -59,8 +59,34 @@ async function fetchAccountApi(options = {}) {
     return payload?.data;
 }
 
+async function fetchAuthorizedApi(url, options = {}) {
+    const accessToken = await authService.getAccessToken();
+    const response = await fetch(url, {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+            ...(options.headers || {})
+        }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload?.error || `Falha na API ${url}.`);
+    }
+    return payload?.data;
+}
+
 export const profileService = {
     async getProfile(userId) {
+        try {
+            const accountProfile = await fetchAccountApi({ method: 'GET' });
+            if (accountProfile?.id && String(accountProfile.id) === String(userId)) {
+                return accountProfile;
+            }
+        } catch (error) {
+            console.warn('[ProfileService] Fallback para leitura direta do profile:', error?.message || error);
+        }
+
         const { data, error } = await supabase
             .from('profiles')
             .select('*')
@@ -191,9 +217,19 @@ export const profileService = {
     },
 
     async updateOrganizationUser(payload) {
-        return fetchAccountApi({
+        return fetch('/api/organizations?scope=user', {
             method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${await authService.getAccessToken()}`
+            },
             body: JSON.stringify(payload)
+        }).then(async (response) => {
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(body?.error || 'Falha ao atualizar usuário da organização.');
+            }
+            return body?.data || null;
         });
     },
 
@@ -203,25 +239,23 @@ export const profileService = {
 
         console.log('[ProfileService] Calculando uso para Org:', targetOrgId);
 
+        const [clientsData, processesData, trashData] = await Promise.all([
+            fetchAuthorizedApi('/api/clients', { method: 'GET' }).catch(() => []),
+            fetchAuthorizedApi('/api/processes', { method: 'GET' }).catch(() => []),
+            fetchAuthorizedApi('/api/trash', { method: 'GET' }).catch(() => [])
+        ]);
+
         // Para adicionar novas categorias no futuro, basta incluir um novo objeto neste array.
         const sources = [
             {
                 label: 'Titulares',
                 color: '#6366f1',
-                async fetch(sb) {
-                    // Exclui titulares que estão na lixeira
-                    const { data: trashed } = await sb
-                        .from('trash').select('item_id')
-                        .eq('organization_id', targetOrgId).eq('item_type', 'titular');
-                    const trashedIds = new Set((trashed || []).map(r => String(r.item_id)));
-
-                    const { data, error } = await sb
-                        .from('clients')
-                        .select('id, documents')
-                        .eq('organization_id', targetOrgId);
-                    if (error) throw error;
+                async fetch() {
+                    const trashedIds = new Set((trashData || [])
+                        .filter((row) => row.item_type === 'titular')
+                        .map((row) => String(row.item_id)));
                     let bytes = 0, count = 0;
-                    (data || []).filter(row => !trashedIds.has(String(row.id))).forEach(row => {
+                    (clientsData || []).filter(row => !trashedIds.has(String(row.id))).forEach(row => {
                         (Array.isArray(row.documents) ? row.documents : []).forEach(doc => {
                             bytes += (Number(doc.size) || 0);
                             if (doc.storagePath || doc.storage_path) count++;
@@ -233,23 +267,14 @@ export const profileService = {
             {
                 label: 'Processos',
                 color: '#0ea5e9',
-                async fetch(sb) {
-                    // Exclui processos que estão na lixeira
-                    const { data: trashed } = await sb
-                        .from('trash').select('item_id')
-                        .eq('organization_id', targetOrgId).eq('item_type', 'processo');
-                    const trashedIds = new Set((trashed || []).map(r => String(r.item_id)));
-
-                    const { data, error } = await sb
-                        .from('processes')
-                        .select('id, doc_storage_path, doc_size, events')
-                        .eq('organization_id', targetOrgId);
-                    if (error) throw error;
-                    
+                async fetch() {
+                    const trashedIds = new Set((trashData || [])
+                        .filter((row) => row.item_type === 'processo')
+                        .map((row) => String(row.item_id)));
                     let count = 0;
                     let bytes = 0;
                     
-                    (data || []).filter(row => !trashedIds.has(String(row.id))).forEach(row => {
+                    (processesData || []).filter(row => !trashedIds.has(String(row.id))).forEach(row => {
                         if (row.doc_storage_path) {
                             count++;
                             bytes += (Number(row.doc_size) || 0);
@@ -268,17 +293,9 @@ export const profileService = {
             {
                 label: 'Lixeira',
                 color: '#f43f5e',
-                async fetch(sb) {
-                    const { data, error } = await sb
-                        .from('trash')
-                        .select('storage_paths, item_type, item_data')
-                        .eq('organization_id', targetOrgId);
-                    if (error) {
-                        console.warn('[ProfileService] Tabela trash não disponível:', error.message);
-                        return { bytes: 0, count: 0 };
-                    }
+                async fetch() {
                     let bytes = 0, count = 0;
-                    (data || []).forEach(row => {
+                    (trashData || []).forEach(row => {
                         // Conta arquivos físicos
                         const paths = Array.isArray(row.storage_paths) ? row.storage_paths : [];
                         count += paths.filter(p => p && p.length > 0).length;
@@ -313,7 +330,7 @@ export const profileService = {
 
         await Promise.all(sources.map(async (source, index) => {
             try {
-                const result = await source.fetch(supabase);
+                const result = await source.fetch();
                 breakdown[index] = { label: source.label, color: source.color, bytes: result.bytes, count: result.count };
                 totalBytes += result.bytes;
                 fileCount += result.count;

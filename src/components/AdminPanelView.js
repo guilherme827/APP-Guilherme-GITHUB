@@ -4,6 +4,7 @@ import { renderTeamSettings } from './TeamSettings.js';
 import { renderTrashView } from './TrashView.js';
 import { trashStore } from '../utils/TrashStore.js';
 import { ActivityLogView } from './ActivityLogView.js';
+import { authService } from '../utils/AuthService.js';
 
 export function renderAdminPanelView(container, options = {}) {
     const {
@@ -162,11 +163,42 @@ export function renderAdminPanelView(container, options = {}) {
         const downloadBtn = target.querySelector('#btn-generate-backup-admin');
         if (downloadBtn) {
             downloadBtn.onclick = async () => {
+                const originalLabel = downloadBtn.textContent;
                 try {
-                    const { showNoticeModal } = await import('./NoticeModal.js');
-                    showNoticeModal('Funcionalidade em desenvolvimento', 'A geração de backup estruturado está sendo processada nos servidores da GEOCONSULT. Você receberá um link quando o arquivo estiver pronto.');
+                    downloadBtn.disabled = true;
+                    downloadBtn.textContent = 'GERANDO BACKUP...';
+
+                    const accessToken = await authService.getAccessToken();
+                    const response = await fetch('/api/admin-backup', {
+                        method: 'GET',
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`
+                        }
+                    });
+
+                    if (!response.ok) {
+                        const payload = await response.json().catch(() => ({}));
+                        throw new Error(payload?.error || 'Nao foi possivel gerar o backup.');
+                    }
+
+                    const blob = await response.blob();
+                    const disposition = String(response.headers.get('Content-Disposition') || '');
+                    const match = disposition.match(/filename="([^"]+)"/i);
+                    const fileName = match?.[1] || `backup-geoconsult-${new Date().toISOString().slice(0, 10)}.zip`;
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = fileName;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(url);
                 } catch (e) {
-                    alert('A geração de backup está sendo processada.');
+                    const { showNoticeModal } = await import('./NoticeModal.js');
+                    showNoticeModal('Erro ao gerar backup', e?.message || 'Nao foi possivel gerar o arquivo ZIP de backup.');
+                } finally {
+                    downloadBtn.disabled = false;
+                    downloadBtn.textContent = originalLabel;
                 }
             };
         }

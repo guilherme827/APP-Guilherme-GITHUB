@@ -193,7 +193,8 @@ export function renderLoginScreen(container, onLogin) {
         render();
     };
 
-    const withLoading = async (task) => {
+    const withLoading = async (task, options = {}) => {
+        const { renderOnSuccess = true } = options;
         state.loading = true;
         resetFeedback();
         render();
@@ -217,7 +218,9 @@ export function renderLoginScreen(container, onLogin) {
             await delay(MIN_LOADING_MS - elapsed);
         }
         state.loading = false;
-        render();
+        if (renderOnSuccess) {
+            render();
+        }
     };
 
     const render = () => {
@@ -330,7 +333,7 @@ export function renderLoginScreen(container, onLogin) {
             state.loginPassword = String(formData.get('password') || '');
             await withLoading(async () => {
                 await onLogin(state.loginEmail, state.loginPassword);
-            });
+            }, { renderOnSuccess: false });
         });
     };
 
