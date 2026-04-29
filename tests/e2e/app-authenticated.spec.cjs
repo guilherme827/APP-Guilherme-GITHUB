@@ -94,6 +94,61 @@ async function bootAuthenticatedApp(page, profile, extra = {}) {
     await expect(page).toHaveURL(/\/app$/);
 }
 
+async function installFinanceApiMock(page, initialState = null) {
+    let financeState = initialState || {
+        version: 2,
+        userScoped: false,
+        activeTab: 'caixa',
+        itemsByTab: {
+            caixa: [],
+            fichas: [],
+            agendamentos: []
+        },
+        updatedAt: null
+    };
+
+    await page.route('**/api/finance', async (route) => {
+        const request = route.request();
+        if (request.method() === 'GET') {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({
+                    data: {
+                        state: financeState,
+                        updatedAt: financeState.updatedAt
+                    }
+                })
+            });
+            return;
+        }
+
+        if (request.method() === 'PUT') {
+            const body = JSON.parse(request.postData() || '{}');
+            financeState = {
+                ...financeState,
+                ...body.state,
+                updatedAt: new Date().toISOString()
+            };
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({
+                    data: {
+                        state: financeState,
+                        updatedAt: financeState.updatedAt
+                    }
+                })
+            });
+            return;
+        }
+
+        await route.fallback();
+    });
+
+    return () => financeState;
+}
+
 test.describe('Authenticated app', () => {
     test('permite navegar pelas secoes principais com sessao mockada', async ({ page }) => {
         await bootAuthenticatedApp(page, {
@@ -113,7 +168,7 @@ test.describe('Authenticated app', () => {
         await expect(page.getByLabel('Adicionar titular')).toBeVisible();
 
         await page.getByLabel('Processos').click();
-        await expect(page.getByPlaceholder('Buscar titular...')).toBeVisible();
+        await expect(page.getByPlaceholder('Buscar processo, titular ou projeto...')).toBeVisible();
         await expect(page.getByLabel('Adicionar processo')).toBeVisible();
         await expect(page.getByRole('button', { name: /Marina Albuquerque/i })).toBeVisible();
 
@@ -121,10 +176,12 @@ test.describe('Authenticated app', () => {
         await expect(page.getByText('PRAZOS EM ABERTO')).toBeVisible();
 
         await page.getByLabel('Financeiro').click();
-        await expect(page.getByText('Financeiro individual preparado.')).toBeVisible();
+        await expect(page.getByRole('tab', { name: 'Caixa' })).toBeVisible();
+        await expect(page.getByLabel('Adicionar Caixa')).toBeVisible();
 
-        await page.getByLabel('Configuracoes').first().click();
-        await expect(page.getByText('Perfil e seguranca')).toBeVisible();
+        await page.getByRole('button', { name: 'Configurações' }).click();
+        await page.getByRole('button', { name: 'Meu Perfil' }).click();
+        await expect(page.getByRole('heading', { name: 'Meu Perfil' })).toBeVisible();
         await expect(page.locator('#settings-open-team')).toHaveCount(0);
     });
 
@@ -133,11 +190,10 @@ test.describe('Authenticated app', () => {
             teamProfiles: ADMIN_TEAM
         });
 
-        await page.getByLabel('Configuracoes').first().click();
-        await expect(page.getByText('Perfil e seguranca')).toBeVisible();
-        await expect(page.getByRole('button', { name: 'Gerenciar equipe' })).toBeVisible();
-
-        await page.getByRole('button', { name: 'Gerenciar equipe' }).click();
+        await page.getByRole('button', { name: 'Configurações' }).click();
+        await page.getByRole('button', { name: 'Meu Perfil' }).click();
+        await expect(page.getByRole('heading', { name: 'Meu Perfil' })).toBeVisible();
+        await page.getByRole('button', { name: 'Painel do administrador' }).click();
         await expect(page.getByText('Equipe cadastrada')).toBeVisible();
         await expect(page.getByText('Analista Operacional')).toBeVisible();
         await expect(page.getByRole('button', { name: 'Atualizar lista' })).toBeVisible();
@@ -164,6 +220,7 @@ test.describe('Authenticated app', () => {
         await page.locator('input[name="telefone"]').fill('11999999999');
         await page.getByRole('button', { name: 'SALVAR TITULAR' }).click();
 
+        await expect(page.locator('.view-feedback')).toContainText('Titular criado com sucesso.');
         await expect(page.getByPlaceholder('Buscar titular...')).toBeVisible();
         await page.getByPlaceholder('Buscar titular...').fill('Cliente E2E');
         await expect(page.getByRole('button', { name: /Cliente E2E/i })).toBeVisible();
@@ -175,6 +232,7 @@ test.describe('Authenticated app', () => {
         await page.locator('input[name="nome"]').fill('Cliente E2E Atualizado');
         await page.getByRole('button', { name: 'SALVAR TITULAR' }).click();
 
+        await expect(page.locator('.view-feedback')).toContainText('Titular atualizado com sucesso.');
         await page.getByPlaceholder('Buscar titular...').fill('Atualizado');
         await expect(page.getByRole('button', { name: /Cliente E2E Atualizado/i })).toBeVisible();
     });
@@ -205,6 +263,8 @@ test.describe('Authenticated app', () => {
         await page.locator('input[name="dataProtocolo"]').fill('2026-03-14');
         await page.getByRole('button', { name: 'SALVAR PROCESSO' }).click();
 
+        await expect(page.locator('.view-feedback')).toContainText('Processo criado com sucesso.');
+        await page.getByRole('button', { name: /Marina Albuquerque/i }).click();
         await expect(page.locator('.process-row', { hasText: 'PROC-E2E-001' })).toBeVisible();
 
         const createdRow = page.locator('.process-row', { hasText: 'PROC-E2E-001' }).first();
@@ -216,10 +276,54 @@ test.describe('Authenticated app', () => {
         await page.locator('input[name="tipoSigla"]').fill('LPE');
         await page.getByRole('button', { name: 'SALVAR PROCESSO' }).click();
 
-        await expect(page.getByText('PROC-E2E-EDITADO', { exact: true })).toBeVisible();
-        await expect(page.getByText('LPE', { exact: true })).toBeVisible();
-        await page.getByRole('button', { name: 'OK' }).click();
-        await page.getByText('PROCESSOS').first().click();
-        await expect(page.locator('.process-row', { hasText: 'PROC-E2E-EDITADO' })).toBeVisible();
+        await expect(page.locator('.view-feedback')).toContainText('Processo atualizado com sucesso.');
+        await expect(page.locator('#process-content-panel').getByText('PROC-E2E-EDITADO', { exact: true })).toBeVisible();
+        await expect(page.locator('#process-content-panel').getByText('LPE', { exact: true })).toBeVisible();
+        await expect(page.getByRole('button', { name: /PROC-E2E-EDITADO/i })).toBeVisible();
+    });
+
+    test('mantem o financeiro estavel ao salvar e recarregar', async ({ page }) => {
+        const getFinanceState = await installFinanceApiMock(page);
+
+        await bootAuthenticatedApp(page, {
+            id: 'user-1',
+            email: 'operador@geoconsult.com',
+            full_name: 'Operador Geoconsult',
+            role: 'user',
+            gender: 'neutro',
+            permissions: { view: true, edit: true, delete: false },
+            folder_access: ['painel', 'clientes', 'processos', 'prazos', 'financeiro', 'configuracoes']
+        });
+
+        await page.getByLabel('Financeiro').click();
+        await page.getByLabel('Adicionar Caixa').click();
+        await page.locator('input[name="item_name"]').fill('Caixa Validacao');
+        await page.getByRole('button', { name: 'Salvar' }).click();
+
+        await expect(page.getByRole('status')).toContainText('Registro adicionado com sucesso.');
+        await expect(page.locator('.finance-home')).not.toHaveClass(/animate-fade-in/);
+        await expect(page.locator('.finance-sync-pill')).toHaveCount(0);
+
+        await page.getByRole('tab', { name: 'Fichas' }).click();
+        await page.getByLabel('Adicionar Fichas').click();
+        await page.locator('input[name="item_name"]').fill('Ficha Validacao');
+        await page.getByRole('button', { name: 'Salvar' }).click();
+
+        await expect(page.getByRole('status')).toContainText('Registro adicionado com sucesso.');
+        await expect(page.locator('.finance-home')).not.toHaveClass(/animate-fade-in/);
+        await expect(page.locator('.finance-sync-pill')).toHaveCount(0);
+
+        await page.reload();
+        await expect(page).toHaveURL(/\/app$/);
+        await page.getByLabel('Financeiro').click();
+        await page.getByRole('tab', { name: 'Caixa' }).click();
+        await expect(page.getByText('Caixa Validacao', { exact: true })).toBeVisible();
+        await page.getByRole('tab', { name: 'Fichas' }).click();
+        await expect(page.getByText('Ficha Validacao', { exact: true })).toBeVisible();
+        await expect(page.locator('.finance-sync-pill')).toHaveCount(0);
+
+        const persistedState = getFinanceState();
+        expect(persistedState.itemsByTab.caixa).toHaveLength(1);
+        expect(persistedState.itemsByTab.fichas).toHaveLength(1);
     });
 });

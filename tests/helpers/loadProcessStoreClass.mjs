@@ -102,15 +102,96 @@ export function loadProcessStoreClass() {
         'buildProjectsFromProcesses',
         'mapProcessModelToRow',
         'mapProcessRowToModel',
+        'getActiveOrganizationId',
+        'trashStore',
+        'activityLogger',
+        'clientStore',
+        'authService',
         `${classModule}\nreturn ProcessStore;`
     );
     const supabaseMock = createSupabaseMock();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, options = {}) => {
+        if (String(url) !== '/api/processes') {
+            if (typeof originalFetch === 'function') {
+                return originalFetch(url, options);
+            }
+            throw new Error(`Unhandled fetch in test helper: ${url}`);
+        }
+
+        const method = String(options.method || 'GET').toUpperCase();
+        const payload = options.body ? JSON.parse(options.body) : {};
+        const rows = supabaseMock.__getRows();
+
+        if (method === 'GET') {
+            return {
+                ok: true,
+                async json() {
+                    return { data: rows };
+                }
+            };
+        }
+
+        if (method === 'POST') {
+            const nextId = payload.id ?? (rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1);
+            const created = { ...payload, id: nextId };
+            supabaseMock.__setRows([...rows, created]);
+            return {
+                ok: true,
+                async json() {
+                    return { data: created };
+                }
+            };
+        }
+
+        if (method === 'PATCH') {
+            const targetId = String(payload.id);
+            const nextRows = rows.map((row) => (
+                String(row.id) === targetId
+                    ? { ...row, ...payload, id: row.id }
+                    : row
+            ));
+            const updated = nextRows.find((row) => String(row.id) === targetId) || null;
+            supabaseMock.__setRows(nextRows);
+            return {
+                ok: Boolean(updated),
+                async json() {
+                    return updated
+                        ? { data: updated }
+                        : { error: 'Registro não encontrado.' };
+                }
+            };
+        }
+
+        if (method === 'DELETE') {
+            const targetId = String(payload.id);
+            supabaseMock.__setRows(rows.filter((row) => String(row.id) !== targetId));
+            return {
+                ok: true,
+                async json() {
+                    return { data: true };
+                }
+            };
+        }
+
+        return {
+            ok: false,
+            async json() {
+                return { error: `Método não suportado: ${method}` };
+            }
+        };
+    };
     const ProcessStore = factory(
         supabaseMock,
         (process) => `project-${process?.id || 'x'}`,
         () => [],
         (model) => model,
-        (row) => row
+        (row) => row,
+        () => null,
+        {},
+        { logAction() {} },
+        { clients: [] },
+        { getAccessToken: async () => '' }
     );
     ProcessStore.__supabaseMock = supabaseMock;
     return ProcessStore;

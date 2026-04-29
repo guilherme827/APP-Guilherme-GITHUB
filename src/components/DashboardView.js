@@ -28,7 +28,22 @@ const DASHBOARD_EDITOR_MODE_FULL = 'full';
 const DASHBOARD_EDITOR_MODE_AGENDA_ITEM = 'agenda-item';
 const DASHBOARD_EDITOR_MODE_AGENDA_TITLE = 'agenda-title';
 
-export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WIDGETS_STORAGE_KEY, deadlineAlertDays = 15) {
+export function renderDashboard(container, actionHost, options = {}) {
+    const storageKey = typeof options === 'string'
+        ? options
+        : (options.storageKey || DASHBOARD_WIDGETS_STORAGE_KEY);
+    const deadlineAlertDays = typeof options === 'object' && options !== null
+        ? Number(options.deadlineAlertDays) || 15
+        : 15;
+    const summarySnapshot = typeof options === 'object' && options !== null
+        ? options.summarySnapshot || null
+        : null;
+    const initialPayload = typeof options === 'object' && options !== null
+        ? options.initialPayload
+        : null;
+    const persistPreference = typeof options === 'object' && options !== null && typeof options.onPersist === 'function'
+        ? options.onPersist
+        : null;
     let clockTicker = null;
     let currentGridColumns = 6;
     let currentGridState = null;
@@ -147,14 +162,9 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
 
     const loadWidgets = () => {
         try {
-            const parsed = JSON.parse(localStorage.getItem(storageKey) || 'null');
+            const parsed = initialPayload ?? JSON.parse(localStorage.getItem(storageKey) || 'null');
             if (Array.isArray(parsed)) {
                 const migratedWidgets = normalizeLoadedWidgets(parsed);
-                localStorage.setItem(storageKey, JSON.stringify({
-                    schemaVersion: DASHBOARD_WIDGETS_SCHEMA_VERSION,
-                    updatedAt: Date.now(),
-                    widgets: migratedWidgets
-                }));
                 return migratedWidgets;
             }
             if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.widgets)) return [];
@@ -260,12 +270,18 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
                 }
             };
         });
+        const payload = {
+            schemaVersion: DASHBOARD_WIDGETS_SCHEMA_VERSION,
+            updatedAt: Date.now(),
+            widgets: serialized
+        };
+
         try {
-            localStorage.setItem(storageKey, JSON.stringify({
-                schemaVersion: DASHBOARD_WIDGETS_SCHEMA_VERSION,
-                updatedAt: Date.now(),
-                widgets: serialized
-            }));
+            if (persistPreference) {
+                void persistPreference(payload);
+                return;
+            }
+            localStorage.setItem(storageKey, JSON.stringify(payload));
         } catch (error) {
             reportDashboardError('dashboard-persist-widgets', error, { storageKey, widgetsCount: serialized.length });
         }
@@ -495,6 +511,28 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
             .toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
             .replace(/^./, (char) => char.toUpperCase());
 
+        if (!processStore.isLoaded && summarySnapshot?.monthlyGoals) {
+            return `
+                <article class="bento-widget bento-widget--summary bento-widget--monthly-goal" data-widget-id="${widget.id}">
+                    ${renderWidgetOverlayActions(widget)}
+                    <div class="monthly-goal-panel">
+                        <p class="monthly-goal-kicker">Meta do mes</p>
+                        <div class="monthly-goal-metrics">
+                            <div class="monthly-goal-metric">
+                                <h3 class="monthly-goal-title">Titulos outorgados</h3>
+                                <p class="monthly-goal-value">${Number(summarySnapshot.monthlyGoals.outorgadosNoMes || 0)}</p>
+                            </div>
+                            <div class="monthly-goal-metric">
+                                <h3 class="monthly-goal-title">Processos protocolados</h3>
+                                <p class="monthly-goal-value">${Number(summarySnapshot.monthlyGoals.requerimentosProtocoladosNoMes || 0)}</p>
+                            </div>
+                        </div>
+                        <p class="monthly-goal-period">${monthLabel}</p>
+                    </div>
+                </article>
+            `;
+        }
+
         const safeProcesses = Array.isArray(processStore.processes) ? processStore.processes : [];
         const outorgadosNoMes = safeProcesses.filter((process) => {
             const rawDate = String(process?.dataOutorga || '').trim();
@@ -575,8 +613,9 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
     };
 
     const renderResumoWidget = (widget) => {
-        const safeProcesses = Array.isArray(processStore.processes) ? processStore.processes : [];
-        const totalTitulares = clientStore.getClients().length;
+        const canUseLiveStores = processStore.isLoaded && clientStore.isLoaded;
+        const safeProcesses = canUseLiveStores && Array.isArray(processStore.processes) ? processStore.processes : [];
+        const totalTitulares = canUseLiveStores ? clientStore.getClients().length : Number(summarySnapshot?.totalTitulares || 0);
         const showTitulares = widget.options.totalTitulares;
         const showTitularesComProcesso = widget.options.titularesComProcesso;
         const showProcessos = widget.options.totalProcessos;
@@ -591,7 +630,19 @@ export function renderDashboard(container, actionHost, storageKey = DASHBOARD_WI
             prazoDistribution,
             topProcessTypes,
             hasCriticalDeadlines
-        } = buildDashboardSummaryMetrics(safeProcesses, totalTitulares);
+        } = canUseLiveStores
+            ? buildDashboardSummaryMetrics(safeProcesses, totalTitulares)
+            : {
+                totalProcessos: Number(summarySnapshot?.totalProcessos || 0),
+                titularesComProcesso: Number(summarySnapshot?.titularesComProcesso || 0),
+                titularesSemProcesso: Number(summarySnapshot?.titularesSemProcesso || 0),
+                titularesComProcessoPercent: Number(summarySnapshot?.titularesComProcessoPercent || 0),
+                totalPrazos: Number(summarySnapshot?.totalPrazos || 0),
+                maxDeadlineBucket: Number(summarySnapshot?.maxDeadlineBucket || 1),
+                prazoDistribution: Array.isArray(summarySnapshot?.prazoDistribution) ? summarySnapshot.prazoDistribution : [],
+                topProcessTypes: Array.isArray(summarySnapshot?.topProcessTypes) ? summarySnapshot.topProcessTypes : [],
+                hasCriticalDeadlines: summarySnapshot?.hasCriticalDeadlines === true
+            };
         const showTitularesSection = showTitulares || showTitularesComProcesso;
         const hasAnySection = showTitularesSection || showProcessos || showPrazos;
 

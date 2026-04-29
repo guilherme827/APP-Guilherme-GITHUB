@@ -1,6 +1,7 @@
 import { processStore } from '../utils/ProcessStore.js';
 import { clientStore } from '../utils/ClientStore.js';
 import { projectStore } from '../utils/ProjectStore.js';
+import { openAiChat } from '../utils/AIChatNavigation.js';
 import { escapeHtml } from '../utils/sanitize.js';
 import { getDocumentAccessUrl } from '../utils/DocumentStorage.js';
 
@@ -194,6 +195,11 @@ export function renderProcessDetails(container, actionsContainer, processId, onN
 
     container.innerHTML = `
         <div class="animate-fade-in" style="max-width: 100%; display:flex; flex-direction:column; gap:1.25rem;">
+            <div style="display:flex; justify-content:flex-end; gap:0.6rem;">
+                <button type="button" class="btn-pill" id="btn-process-ai-tecnico">IA Técnico</button>
+                <button type="button" class="btn-pill" id="btn-process-ai-compliance">IA Compliance</button>
+                <button type="button" class="btn-pill" id="btn-process-ai-secretaria">IA Secretaria</button>
+            </div>
             <div class="glass-card" style="padding:1.25rem 1.5rem;">
                 <div style="display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:1rem; margin-bottom:0.75rem;">
                     <div>
@@ -321,6 +327,46 @@ export function renderProcessDetails(container, actionsContainer, processId, onN
             link.click();
             document.body.removeChild(link);
         };
+    });
+
+    const processContext = [
+        `Titular: ${clientName}.`,
+        `Processo: ${process.numeroProcesso || 'nao informado'}.`,
+        `Titulo: ${process.numeroTitulo || 'nao informado'}.`,
+        `Tipo: ${process.tipo || 'nao informado'}. Tipologia: ${process.tipologia || 'nao informado'}.`,
+        `Projeto: ${project?.name || 'sem projeto'}.`,
+        `Orgao: ${process.orgaoSigla || process.orgaoNomeCompleto || 'nao informado'}.`,
+        `Municipio: ${process.municipio || 'nao informado'}.`,
+        `Fase atual: ${String(process.numeroTitulo || '').trim() ? 'Título' : 'Requerimento'}.`,
+        `Data protocolo: ${process.dataProtocolo || 'nao informada'}. Data validade: ${process.dataValidade || 'nao informada'}.`,
+        `Quantidade de eventos no extrato: ${sortedEventsOldestFirst.length}.`
+    ];
+
+    container.querySelector('#btn-process-ai-tecnico')?.addEventListener('click', () => {
+        openAiChat({
+            agentSlug: 'tecnico',
+            feature: 'process_context_chat',
+            prompt: `Analise este processo e proponha uma minuta tecnica inicial com base nos dados disponiveis.`,
+            context: processContext
+        });
+    });
+
+    container.querySelector('#btn-process-ai-compliance')?.addEventListener('click', () => {
+        openAiChat({
+            agentSlug: 'compliance',
+            feature: 'process_context_chat',
+            prompt: `Monte um checklist de protocolo e pendencias legais para este processo.`,
+            context: processContext
+        });
+    });
+
+    container.querySelector('#btn-process-ai-secretaria')?.addEventListener('click', () => {
+        openAiChat({
+            agentSlug: 'secretaria',
+            feature: 'process_context_chat',
+            prompt: `Redija uma comunicacao profissional sobre este processo para o titular.`,
+            context: processContext
+        });
     });
 
     const buildExtractHTML = async (selectedEvents, generatedAt) => {

@@ -12,6 +12,17 @@ export function normalizeAgendaTask(task, index) {
         priorityType,
         dueDate,
         status,
+        meta: task?.meta && typeof task.meta === 'object'
+            ? {
+                source: String(task.meta.source || '').trim(),
+                processNumbers: Array.isArray(task.meta.processNumbers)
+                    ? task.meta.processNumbers.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 3)
+                    : [],
+                clientLabel: String(task.meta.clientLabel || '').trim(),
+                promptExcerpt: String(task.meta.promptExcerpt || '').trim(),
+                createdFromMessageId: String(task.meta.createdFromMessageId || '').trim()
+            }
+            : null,
         createdAt: Number.isFinite(Number(task?.createdAt)) ? Number(task.createdAt) : Date.now(),
         updatedAt: Number.isFinite(Number(task?.updatedAt)) ? Number(task.updatedAt) : Date.now()
     };

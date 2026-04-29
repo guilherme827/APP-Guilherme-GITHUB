@@ -1,4 +1,4 @@
-import { FOLDER_OPTIONS } from '../utils/accessControl.js';
+import { FOLDER_OPTIONS, ORGANIZATION_MODULE_IDS, getRoleLabel, hasAdminAccess } from '../utils/accessControl.js';
 
 function escapeHtml(value) {
     return String(value || '')
@@ -17,8 +17,15 @@ function getFolderAccess(folderAccess) {
     return Array.isArray(folderAccess) ? folderAccess : [];
 }
 
+function getDefaultPermissionsForRole(role) {
+    return hasAdminAccess({ role })
+        ? { view: true, edit: true, delete: true }
+        : { view: true, edit: false, delete: false };
+}
+
 const FOLDER_ICONS = {
     'organizacoes': '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path><path d="M9 9h.01"></path><path d="M9 13h.01"></path><path d="M9 17h.01"></path><path d="M13 13h.01"></path><path d="M13 17h.01"></path></svg>',
+    'ia-chat': '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"></path><path d="M5 3v3"></path><path d="M3.5 4.5h3"></path><path d="M19 18v3"></path><path d="M17.5 19.5h3"></path></svg>',
     'painel': '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>',
     'clientes': '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>',
     'processos': '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>',
@@ -38,13 +45,10 @@ export function renderTeamSettings(container, {
     onCreateMember,
     onUpdateMember
 }) {
-    // Para cards de edição de membros já existentes (respeita módulos da organização)
-    const availableFolders = Array.isArray(availableModules) && availableModules.length > 0
-        ? FOLDER_OPTIONS.filter((folder) => folder.id !== 'organizacoes' && availableModules.includes(folder.id))
-        : FOLDER_OPTIONS.filter((folder) => folder.id !== 'organizacoes');
-
-    // Para o formulário de Novo Membro: sempre mostra todas as pastas (admin pode conceder qualquer acesso)
-    const allFolders = FOLDER_OPTIONS.filter((folder) => folder.id !== 'organizacoes');
+    const allowedFolderIds = Array.isArray(availableModules) && availableModules.length > 0
+        ? availableModules
+        : ORGANIZATION_MODULE_IDS;
+    const availableFolders = FOLDER_OPTIONS.filter((folder) => allowedFolderIds.includes(folder.id));
 
     container.innerHTML = `
         <div class="animate-fade-in" style="max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 1.5rem;">
@@ -76,12 +80,10 @@ export function renderTeamSettings(container, {
                     <div style="margin-top: 1rem;">
                         <p class="label-tech" style="margin-bottom: 0.85rem;">ACESSO DE PASTAS (MENU LATERAL)</p>
                         <div style="display: flex; flex-direction: column; gap: 10px;">
-                            ${allFolders.map((folder) => {
-                                // admin-panel desmarcado por padrão para novos colaboradores
-                                const defaultChecked = folder.id !== 'admin-panel';
+                            ${availableFolders.map((folder) => {
                                 return `
                                 <label class="folder-access-cell" data-folder="${folder.id}" style="display: flex; align-items: center; gap: 16px; width: 100%; padding: 14px 16px; border-radius: 12px; border: 1px solid; cursor: pointer; transition: all 0.2s ease;">
-                                    <input type="checkbox" name="folder_access" value="${folder.id}" ${defaultChecked ? 'checked' : ''} class="team-folder-access" style="width: 1.1rem; height: 1.1rem; flex-shrink: 0; accent-color: #22c55e; cursor: pointer; margin: 0;" />
+                                    <input type="checkbox" name="folder_access" value="${folder.id}" checked class="team-folder-access" style="width: 1.1rem; height: 1.1rem; flex-shrink: 0; accent-color: #22c55e; cursor: pointer; margin: 0;" />
                                     ${FOLDER_ICONS[folder.id] || ''}
                                     <span style="font-weight: 500; font-size: 0.92rem;">${escapeHtml(folder.label)}</span>
                                 </label>
@@ -101,7 +103,7 @@ export function renderTeamSettings(container, {
                     <div>
                         <p class="label-tech">CONTROLE DE ACESSO</p>
                         <h2 class="font-black" style="font-size: 1.6rem; margin-top: 0.35rem;">Equipe cadastrada</h2>
-                        <p style="color: var(--slate-500); margin-top: 0.5rem; line-height: 1.6;">Seu perfil atual: <strong>${escapeHtml(currentProfile?.full_name || currentProfile?.email || 'Administrador')}</strong> (${escapeHtml(currentProfile?.role || 'admin')})</p>
+                        <p style="color: var(--slate-500); margin-top: 0.5rem; line-height: 1.6;">Seu perfil atual: <strong>${escapeHtml(currentProfile?.full_name || currentProfile?.email || 'Administrador')}</strong> (${escapeHtml(getRoleLabel(currentProfile?.role || 'admin'))})</p>
                     </div>
                     <button type="button" class="btn-pill" id="refresh-team-users" style="background: var(--bg-main); border: 1px solid var(--slate-200); color: var(--slate-900);">
                         ${loading ? 'Atualizando...' : 'Atualizar lista'}
@@ -119,7 +121,7 @@ export function renderTeamSettings(container, {
                                     <p class="label-tech" style="margin-top: 0.35rem; text-transform: lowercase;">${escapeHtml(profile.email || '-')}</p>
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 0.75rem;">
-                                    <span class="label-tech" style="display: inline-flex; padding: 0.35rem 0.6rem; border-radius: 9999px; background: ${profile.role === 'admin' ? 'rgba(59,130,246,0.14)' : 'rgba(16,185,129,0.14)'}; color: ${profile.role === 'admin' ? 'var(--blue-500)' : 'var(--primary)'};">${escapeHtml(profile.role === 'admin' ? 'Administrador' : 'Colaborador')}</span>
+                                    <span class="label-tech" style="display: inline-flex; padding: 0.35rem 0.6rem; border-radius: 9999px; background: ${hasAdminAccess(profile) ? 'rgba(59,130,246,0.14)' : 'rgba(16,185,129,0.14)'}; color: ${hasAdminAccess(profile) ? 'var(--blue-500)' : 'var(--primary)'};">${escapeHtml(getRoleLabel(profile.role))}</span>
                                     <button type="button" class="btn-icon team-member-edit-toggle" style="background: transparent; border: none; cursor: pointer; color: var(--slate-500); padding: 0.2rem; border-radius: 50%; display: flex; align-items: center; justify-content: center;" title="Editar membro">
                                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
                                     </button>
@@ -143,7 +145,7 @@ export function renderTeamSettings(container, {
                                                     type="checkbox"
                                                     class="team-folder-access"
                                                     value="${folder.id}"
-                                                    ${getFolderAccess(profile.folder_access).includes(folder.id) || profile.role === 'admin' ? 'checked' : ''}
+                                                    ${getFolderAccess(profile.folder_access).includes(folder.id) || hasAdminAccess(profile) ? 'checked' : ''}
                                                 />
                                                 <div style="display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 0;">
                                                     <span class="team-folder-icon" style="color: var(--slate-500); display: flex; align-items: center;">
@@ -257,11 +259,7 @@ export function renderTeamSettings(container, {
             email: String(formData.get('email') || '').trim(),
             password: String(formData.get('password') || ''),
             role: String(formData.get('role') || 'user'),
-            permissions: {
-                view: true,
-                edit: true,
-                delete: true
-            },
+            permissions: getDefaultPermissionsForRole(String(formData.get('role') || 'user')),
             folder_access: formData.getAll('folder_access').map((value) => String(value))
         });
     });
@@ -296,11 +294,7 @@ export function renderTeamSettings(container, {
                 id: profileId,
                 full_name: card.querySelector('.team-input-full-name')?.value || '',
                 role: profileRole, 
-                permissions: {
-                    view: true,
-                    edit: true,
-                    delete: true
-                },
+                permissions: profiles.find((profile) => String(profile.id) === String(profileId))?.permissions || getDefaultPermissionsForRole(profileRole),
                 folder_access: [...card.querySelectorAll('.team-folder-access:checked')].map((input) => input.value)
             });
         });

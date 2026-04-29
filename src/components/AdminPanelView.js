@@ -5,6 +5,7 @@ import { renderTrashView } from './TrashView.js';
 import { trashStore } from '../utils/TrashStore.js';
 import { ActivityLogView } from './ActivityLogView.js';
 import { authService } from '../utils/AuthService.js';
+import { renderAIControlView } from './AIControlView.js';
 
 export function renderAdminPanelView(container, options = {}) {
     const {
@@ -25,6 +26,7 @@ export function renderAdminPanelView(container, options = {}) {
 
     const tabs = [
         { id: 'equipe', label: 'Gestão de Equipe', icon: usersIcon() },
+        { id: 'ia', label: 'Controle da IA', icon: sparklesIcon() },
         { id: 'ambiente', label: 'Status do Ambiente', icon: activityIcon() },
         { id: 'organizacao', label: 'Dados da Organização', icon: buildingsIcon() },
         { id: 'lixeira', label: 'Lixeira', icon: trashIcon() },
@@ -87,6 +89,12 @@ export function renderAdminPanelView(container, options = {}) {
         switch (state.activeTab) {
             case 'equipe':
                 renderTeamTab(contentArea);
+                break;
+            case 'ia':
+                const aiWrapper = document.createElement('div');
+                aiWrapper.className = 'settings-detail-wrapper';
+                contentArea.appendChild(aiWrapper);
+                renderAIControlView(aiWrapper);
                 break;
             case 'ambiente':
                 const envWrapper = document.createElement('div');
@@ -250,6 +258,7 @@ export function renderAdminPanelView(container, options = {}) {
 }
 
 function usersIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`; }
+function sparklesIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"></path><path d="M5 3v4"></path><path d="M3 5h4"></path><path d="M19 17v4"></path><path d="M17 19h4"></path></svg>`; }
 function activityIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>`; }
 function buildingsIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path><path d="M9 9h.01"></path><path d="M9 13h.01"></path><path d="M9 17h.01"></path><path d="M13 13h.01"></path><path d="M13 17h.01"></path></svg>`; }
 function shieldIcon() { return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>`; }

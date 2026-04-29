@@ -22,11 +22,19 @@ export function showNoticeModal(title, message) {
     `;
 
     const close = () => backdrop.remove();
+    const okButton = backdrop.querySelector('#notice-ok');
 
-    backdrop.querySelector('#notice-ok').onclick = close;
+    okButton.onclick = close;
     backdrop.onclick = (e) => {
         if (e.target === backdrop) close();
     };
+    backdrop.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === 'Escape') {
+            event.preventDefault();
+            close();
+        }
+    });
 
     document.body.appendChild(backdrop);
+    okButton?.focus();
 }

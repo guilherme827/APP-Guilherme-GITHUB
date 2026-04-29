@@ -1,6 +1,7 @@
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 const JSZip = require('jszip');
+const accessPolicy = require('../shared/accessPolicy.cjs');
 
 function getClients(env) {
     const supabaseUrl = String(env.VITE_SUPABASE_URL || '').trim();
@@ -51,7 +52,7 @@ async function authenticateRequester(req, env) {
         return { error: { status: 403, message: 'Usuario sem organizacao vinculada.' } };
     }
 
-    if (!['admin', 'super_admin'].includes(String(profile.role || '').trim())) {
+    if (!accessPolicy.isAdminRole(profile.role)) {
         return { error: { status: 403, message: 'Apenas administradores podem gerar backup.' } };
     }
 

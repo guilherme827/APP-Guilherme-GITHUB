@@ -1,4 +1,4 @@
-import { FOLDER_OPTIONS, normalizeOrganizationModules } from '../utils/accessControl.js';
+import { FOLDER_OPTIONS, getRoleLabel, hasAdminAccess, normalizeOrganizationModules } from '../utils/accessControl.js';
 
 function escapeHtml(value) {
     return String(value || '')
@@ -66,7 +66,7 @@ function filterOrganizations(organizations, query) {
 
 function getPrimaryAdmin(organization) {
     const users = Array.isArray(organization?.users) ? organization.users : [];
-    return users.find((user) => user?.role === 'admin') || users[0] || null;
+    return users.find((user) => hasAdminAccess(user)) || users[0] || null;
 }
 
 function renderOrganizationListItem(organization, selectedId) {
@@ -105,6 +105,9 @@ function renderOrganizationStatus(organization) {
 }
 
 function renderModuleIcon(moduleId) {
+    if (moduleId === 'ia-chat') {
+        return `<svg class="dock-icon-svg dock-icon-svg--ia-chat" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"></path><path d="M5 3v3"></path><path d="M3.5 4.5h3"></path><path d="M19 18v3"></path><path d="M17.5 19.5h3"></path></svg>`;
+    }
     if (moduleId === 'painel') {
         return `<svg class="dock-icon-svg dock-icon-svg--painel" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect class="dock-panel-tile tile-a" x="3" y="3" width="7" height="7"></rect><rect class="dock-panel-tile tile-b" x="14" y="3" width="7" height="7"></rect><rect class="dock-panel-tile tile-c" x="14" y="14" width="7" height="7"></rect><rect class="dock-panel-tile tile-d" x="3" y="14" width="7" height="7"></rect></svg>`;
     }
@@ -164,7 +167,7 @@ function renderOrganizationDetail(organization) {
                                         <tbody>
                                             ${users.map((user) => `
                                                 <tr>
-                                                    <td>${escapeHtml(user.role === 'admin' ? 'Administrador' : 'Colaborador')}</td>
+                                                    <td>${escapeHtml(getRoleLabel(user.role))}</td>
                                                     <td>${escapeHtml(user.email || 'Sem e-mail')}</td>
                                                     <td>${escapeHtml(user.full_name || 'Sem nome')}</td>
                                                     <td>${escapeHtml(user.cpf ? formatCpf(user.cpf) : '—')}</td>
@@ -758,7 +761,7 @@ export function renderOrganizationAdminView(container, {
 
 async function showOrganizationUserModal({ organization, user = null, mode = 'create', onSave }) {
     const availableModules = normalizeOrganizationModules(organization?.enabled_modules);
-    const currentRole = user?.role === 'admin' ? 'admin' : 'user';
+    const currentRole = hasAdminAccess(user) ? 'admin' : 'user';
     const backdrop = document.createElement('div');
     backdrop.className = 'notice-backdrop animate-fade-in';
     backdrop.style.cssText = `

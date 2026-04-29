@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabaseClient.js';
 import { authService } from './AuthService.js';
+import { normalizeApiError, normalizeAuthError } from './networkErrors.js';
 
 function getSupabaseMessage(error, fallback) {
     return error?.message || fallback;
@@ -24,59 +25,90 @@ function getFallbackProfile(userId, email = '') {
 }
 
 async function fetchTeamApi(path = '', options = {}) {
-    const accessToken = await authService.getAccessToken();
-    const response = await fetch(`/api/team-members${path}`, {
-        ...options,
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-            ...(options.headers || {})
-        }
-    });
+    try {
+        const accessToken = await authService.getAccessToken();
+        const response = await fetch(`/api/team-members${path}`, {
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+                ...(options.headers || {})
+            }
+        });
 
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-        throw new Error(payload?.error || 'Falha na API de equipe.');
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload?.error || 'Falha na API de equipe.');
+        }
+        return payload?.data;
+    } catch (error) {
+        throw normalizeApiError(error, {
+            fallbackMessage: 'Falha na API de equipe.',
+            operation: options.method || 'GET',
+            endpoint: `/api/team-members${path}`,
+            target: 'local-api'
+        });
     }
-    return payload?.data;
 }
 
 async function fetchAccountApi(options = {}) {
-    const accessToken = await authService.getAccessToken();
-    const response = await fetch('/api/account', {
-        ...options,
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-            ...(options.headers || {})
-        }
-    });
+    try {
+        const accessToken = await authService.getAccessToken();
+        const response = await fetch('/api/account', {
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+                ...(options.headers || {})
+            }
+        });
 
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-        throw new Error(payload?.error || 'Falha na API da conta.');
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload?.error || 'Falha na API da conta.');
+        }
+        return payload?.data;
+    } catch (error) {
+        throw normalizeApiError(error, {
+            fallbackMessage: 'Falha na API da conta.',
+            operation: options.method || 'GET',
+            endpoint: '/api/account',
+            target: 'local-api'
+        });
     }
-    return payload?.data;
 }
 
 async function fetchAuthorizedApi(url, options = {}) {
-    const accessToken = await authService.getAccessToken();
-    const response = await fetch(url, {
-        ...options,
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-            ...(options.headers || {})
+    try {
+        const accessToken = await authService.getAccessToken();
+        const response = await fetch(url, {
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+                ...(options.headers || {})
+            }
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload?.error || `Falha na API ${url}.`);
         }
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-        throw new Error(payload?.error || `Falha na API ${url}.`);
+        return payload?.data;
+    } catch (error) {
+        throw normalizeApiError(error, {
+            fallbackMessage: `Falha na API ${url}.`,
+            operation: options.method || 'GET',
+            endpoint: url,
+            target: 'local-api'
+        });
     }
-    return payload?.data;
 }
 
 export const profileService = {
+    async getBootstrap() {
+        return fetchAuthorizedApi('/api/bootstrap', { method: 'GET' });
+    },
+
     async getProfile(userId) {
         try {
             const accountProfile = await fetchAccountApi({ method: 'GET' });
@@ -104,7 +136,14 @@ export const profileService = {
                 return getFallbackProfile(userId, session?.user?.email || '');
             }
 
-            throw new Error(getSupabaseMessage(error, 'Não foi possível carregar o perfil do usuário.'));
+            throw normalizeAuthError(
+                new Error(getSupabaseMessage(error, 'Nao foi possivel carregar o perfil do usuario.')),
+                {
+                    fallbackMessage: 'Nao foi possivel carregar o perfil do usuario.',
+                    operation: 'getProfile',
+                    target: 'supabase-db'
+                }
+            );
         }
 
         return data;

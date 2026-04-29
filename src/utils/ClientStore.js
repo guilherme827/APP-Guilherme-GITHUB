@@ -1,7 +1,5 @@
-import { supabase } from '../lib/supabaseClient.js';
 import { mapClientModelToRow, mapClientRowToModel } from './supabaseMappers.js';
 import { getActiveOrganizationId } from '../app/organizationContext.js';
-import { trashStore } from './TrashStore.js';
 import { activityLogger } from './ActivityLogger.js';
 import { authService } from './AuthService.js';
 
@@ -36,27 +34,21 @@ export class ClientStore {
         this.clients = [];
         this.ready = Promise.resolve();
         this.isLoaded = false;
+        this.snapshotKey = '[]';
+    }
+
+    computeSnapshotKey(clients = this.clients) {
+        return JSON.stringify(clients || []);
     }
 
     async hydrate() {
-        const organizationId = getCurrentOrganizationId();
-
-        // Busca IDs de titulares que já estão na lixeira para excluí-los da lista normal
-        const { data: trashedData } = await supabase
-            .from('trash')
-            .select('item_id')
-            .eq('organization_id', organizationId)
-            .eq('item_type', 'titular');
-
-        const trashedIds = new Set((trashedData || []).map(r => String(r.item_id)));
-
+        const previousSnapshotKey = this.snapshotKey;
         const data = await fetchClientsApi({ method: 'GET' });
 
-        // Filtra os que estão na lixeira
-        this.clients = (data || [])
-            .filter(row => !trashedIds.has(String(row.id)))
-            .map(mapClientRowToModel);
+        this.clients = (data || []).map(mapClientRowToModel);
         this.isLoaded = true;
+        this.snapshotKey = this.computeSnapshotKey();
+        return { changed: this.snapshotKey !== previousSnapshotKey };
     }
 
 
@@ -70,6 +62,7 @@ export class ClientStore {
         this.clients = [];
         this.isLoaded = false;
         this.ready = Promise.resolve();
+        this.snapshotKey = '[]';
     }
 
     normalizeDoc(doc) {
@@ -120,6 +113,7 @@ export class ClientStore {
 
         const created = mapClientRowToModel(data);
         this.clients.push(created);
+        this.snapshotKey = this.computeSnapshotKey();
 
         // Registro de Atividade
         const label = created.type === 'PF' ? (created.nome || 'Titular') : (created.nomeFantasia || created.nomeEmpresarial || 'Empresa');
@@ -150,6 +144,7 @@ export class ClientStore {
 
         const updated = mapClientRowToModel(data);
         this.clients = this.clients.map((client) => (String(client.id) === String(id) ? updated : client));
+        this.snapshotKey = this.computeSnapshotKey();
 
         // Registro de Atividade
         const label = updated.type === 'PF' ? (updated.nome || 'Titular') : (updated.nomeFantasia || updated.nomeEmpresarial || 'Empresa');
@@ -178,6 +173,7 @@ export class ClientStore {
 
         // Remove do array local imediatamente (some da tela)
         this.clients = this.clients.filter((c) => String(c.id) !== String(id));
+        this.snapshotKey = this.computeSnapshotKey();
 
         // Registro de Atividade
         activityLogger.logAction({

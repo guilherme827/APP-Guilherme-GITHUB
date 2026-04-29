@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const accessPolicy = require('../shared/accessPolicy.cjs');
 
 function sendJson(res, statusCode, payload) {
     res.statusCode = statusCode;
@@ -66,7 +67,7 @@ async function authenticateAdmin(req, env) {
         return { error: { status: 403, message: profileError?.message || 'Perfil do usuário não encontrado.' } };
     }
 
-    if (profile.role !== 'admin') {
+    if (!accessPolicy.isAdminRole(profile.role)) {
         return { error: { status: 403, message: 'Apenas administradores podem gerenciar a equipe.' } };
     }
 
@@ -78,27 +79,40 @@ async function authenticateAdmin(req, env) {
 }
 
 function sanitizeMemberPayload(payload = {}) {
-    const permissions = payload.permissions && typeof payload.permissions === 'object'
-        ? {
-            view: payload.permissions.view !== false,
-            edit: payload.permissions.edit === true,
-            delete: payload.permissions.delete === true
-        }
-        : { view: true, edit: false, delete: false };
-
-    const folderAccess = Array.isArray(payload.folder_access)
-        ? [...new Set(payload.folder_access.filter(Boolean).map((item) => String(item).trim()))]
-        : [];
+    const access = accessPolicy.normalizeManagedUserAccess({
+        role: payload.role,
+        permissions: payload.permissions,
+        folder_access: payload.folder_access,
+        allowedModules: payload.allowed_modules
+    });
 
     return {
         full_name: String(payload.full_name || '').trim(),
         email: String(payload.email || '').trim().toLowerCase(),
         password: String(payload.password || ''),
         gender: String(payload.gender || '').trim() || 'neutro',
-        role: String(payload.role || 'user').trim() === 'admin' ? 'admin' : 'user',
-        permissions,
-        folder_access: folderAccess
+        role: access.role,
+        permissions: access.permissions,
+        folder_access: access.folder_access
     };
+}
+
+async function getAdminAllowedModules(serviceClient, organizationId) {
+    if (!organizationId) {
+        return [...accessPolicy.ORGANIZATION_MODULE_IDS];
+    }
+
+    const { data, error } = await serviceClient
+        .from('organizations')
+        .select('enabled_modules')
+        .eq('id', organizationId)
+        .single();
+
+    if (error && !/enabled_modules/i.test(String(error.message || ''))) {
+        return [...accessPolicy.ORGANIZATION_MODULE_IDS];
+    }
+
+    return accessPolicy.normalizeOrganizationModules(data?.enabled_modules);
 }
 
 async function handleGet(req, res, env) {
@@ -137,7 +151,11 @@ async function handlePost(req, res, env) {
         return;
     }
 
-    const payload = sanitizeMemberPayload(body);
+    const allowedModules = await getAdminAllowedModules(auth.serviceClient, auth.adminProfile.organization_id);
+    const payload = sanitizeMemberPayload({
+        ...body,
+        allowed_modules: allowedModules
+    });
     if (!payload.full_name || !payload.email || !payload.password) {
         sendJson(res, 400, { error: 'Nome, e-mail e senha inicial são obrigatórios.' });
         return;
@@ -206,7 +224,11 @@ async function handlePatch(req, res, env) {
         return;
     }
 
-    const payload = sanitizeMemberPayload(body);
+    const allowedModules = await getAdminAllowedModules(auth.serviceClient, auth.adminProfile.organization_id);
+    const payload = sanitizeMemberPayload({
+        ...body,
+        allowed_modules: allowedModules
+    });
 
     const updatePayload = {
         full_name: payload.full_name,

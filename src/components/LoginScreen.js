@@ -1,7 +1,8 @@
 import { loginSupportService } from '../utils/LoginSupportService.js';
+import loginGlobeTexture from '../assets/login-globe-texture.svg';
 
 const LOGIN_SCREEN_STYLE_ID = 'geoconsult-login-screen-styles';
-const MIN_LOADING_MS = 900;
+const MIN_LOADING_MS = 250;
 
 export function renderLoginScreen(container, onLogin) {
     ensureLoginScreenStyles();
@@ -237,8 +238,8 @@ export function renderLoginScreen(container, onLogin) {
                             <span class="geo-login-wordmark-text">GEOC</span>
                             <span class="geo-login-globe" aria-hidden="true">
                                 <span class="geo-login-globe-track">
-                                    <img src="https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg" alt="" />
-                                    <img src="https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg" alt="" />
+                                    <img src="${loginGlobeTexture}" alt="" />
+                                    <img src="${loginGlobeTexture}" alt="" />
                                 </span>
                                 <span class="geo-login-globe-shade"></span>
                             </span>

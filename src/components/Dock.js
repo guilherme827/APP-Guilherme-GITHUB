@@ -1,6 +1,7 @@
 export function renderDock({ visibleIds = [] } = {}) {
     const primaryItems = [
         { id: 'organizacoes', label: 'Organizações', icon: iconBuildings() },
+        { id: 'ia-chat', label: 'Chat IA', icon: iconSparkles() },
         { id: 'painel', label: 'Painel Central', icon: iconDashboard() },
         { id: 'clientes', label: 'Titulares', icon: iconUsers() },
         { id: 'processos', label: 'Processos', icon: iconFolder() },
@@ -55,6 +56,10 @@ function iconDashboard() {
 
 function iconBuildings() {
     return `<svg class="dock-icon-svg dock-icon-svg--organizacoes" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path><path d="M9 9h.01"></path><path d="M9 13h.01"></path><path d="M9 17h.01"></path><path d="M13 13h.01"></path><path d="M13 17h.01"></path></svg>`;
+}
+
+function iconSparkles() {
+    return `<svg class="dock-icon-svg dock-icon-svg--ia-chat" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"></path><path d="M5 3v3"></path><path d="M3.5 4.5h3"></path><path d="M19 18v3"></path><path d="M17.5 19.5h3"></path></svg>`;
 }
 
 function iconUsers() {

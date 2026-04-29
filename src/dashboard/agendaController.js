@@ -156,11 +156,21 @@ export function createAgendaController(context) {
                 <div class="bento-agenda-list${tasks.length > 5 ? ' has-scroll' : ''}">
                     ${tasks.length ? tasks.map((task) => {
                         const badge = isSimpleList ? null : getTaskDeadlineBadge(task);
+                        const metaLine = !isSimpleList && task?.meta
+                            ? [
+                                task.meta.clientLabel ? `cliente ${task.meta.clientLabel}` : '',
+                                Array.isArray(task.meta.processNumbers) && task.meta.processNumbers.length > 0
+                                    ? `processo ${task.meta.processNumbers.join(', ')}`
+                                    : '',
+                                task.meta.source === 'ai-chat' ? 'origem IA' : ''
+                            ].filter(Boolean).join(' • ')
+                            : '';
                         return `
                             <div class="bento-agenda-item${isSimpleList ? '' : ` is-${task.status}`}">
                                 <div class="bento-agenda-bullet" aria-hidden="true"></div>
                                 <div class="bento-agenda-copy">
                                     <p>${task.text}</p>
+                                    ${metaLine ? `<span style="display:block; margin-top:0.2rem; font-size:0.72rem; color:var(--slate-400);">${metaLine}</span>` : ''}
                                 </div>
                                 <div class="bento-agenda-side">
                                     ${badge ? `<span class="bento-agenda-deadline tone-${badge.tone}">${badge.label}</span>` : ''}

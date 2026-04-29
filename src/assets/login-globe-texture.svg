@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 256" role="img" aria-label="Textura estilizada de globo azul">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#03122f"/>
+      <stop offset="45%" stop-color="#0b3c78"/>
+      <stop offset="100%" stop-color="#04101e"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="30%" cy="25%" r="70%">
+      <stop offset="0%" stop-color="#9be7ff" stop-opacity="0.85"/>
+      <stop offset="30%" stop-color="#35b5ff" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#35b5ff" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#8fd5ff" stroke-opacity="0.15" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="512" height="256" fill="url(#bg)"/>
+  <rect width="512" height="256" fill="url(#grid)"/>
+  <ellipse cx="148" cy="94" rx="130" ry="82" fill="url(#glow)"/>
+  <ellipse cx="366" cy="176" rx="116" ry="66" fill="#0f7dd1" fill-opacity="0.18"/>
+
+  <g fill="#8ed8ff" fill-opacity="0.55">
+    <path d="M42 86c24-18 57-21 85-5 13 7 29 10 43 7 17-4 33-1 44 10-8 13-23 20-39 18-12-1-23 1-33 7-17 10-39 11-58 4C63 120 47 106 42 86Z"/>
+    <path d="M176 150c14-10 34-12 50-4 9 4 19 5 28 2 13-4 27-1 37 8-7 11-20 17-33 16-8-1-16 1-22 5-14 8-31 9-46 3-9-4-17-13-14-30Z"/>
+    <path d="M286 74c21-13 49-13 70 0 10 6 22 8 33 5 13-3 26 1 35 10-7 12-20 19-34 18-10-1-19 1-28 6-16 10-36 11-54 4-12-5-22-17-22-43Z"/>
+    <path d="M330 145c16-11 38-13 56-5 9 4 20 5 30 2 14-5 29-1 39 9-8 12-22 19-36 18-9-1-18 1-26 6-16 10-37 11-54 4-11-5-20-16-9-34Z"/>
+  </g>
+
+  <g fill="none" stroke="#d8f6ff" stroke-opacity="0.26" stroke-width="2">
+    <path d="M-12 72c74 36 166 38 238 0 74-38 150-39 286 4"/>
+    <path d="M-18 138c87 32 178 30 247-6 63-33 154-36 283-2"/>
+    <path d="M-10 202c77 24 160 21 220-10 77-39 180-42 302-4"/>
+  </g>
+</svg>

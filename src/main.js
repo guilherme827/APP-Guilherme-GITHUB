@@ -5,17 +5,26 @@ import { processStore } from './utils/ProcessStore.js';
 import { clientStore } from './utils/ClientStore.js';
 import { projectStore } from './utils/ProjectStore.js';
 import { authService } from './utils/AuthService.js';
+import { financeStore } from './utils/FinanceStore.js';
 import { profileService } from './utils/ProfileService.js';
+import {
+    hasMeaningfulDashboardValue,
+    loadUserPreference,
+    saveUserPreference,
+    USER_PREFERENCE_KEYS
+} from './utils/UserPreferences.js';
 import { showNoticeModal } from './components/NoticeModal.js';
 import { createAppRuntimeState } from './app/appRuntimeState.js';
 import { resetActiveOrganizationId, setActiveOrganizationId } from './app/organizationContext.js';
 import {
-    getUserScopedStorageKey
+    getUserScopedStorageKey,
+    loadUserScopedJsonStorage
 } from './dashboard/userScopedStorage.js';
 import {
     canDeleteContent,
     canEditContent,
     canViewSection,
+    getPreferredVisibleSection,
     hasAdminAccess,
     hasOfficeAdminAccess,
     hasSuperAdminAccess
@@ -34,6 +43,8 @@ const FINANCE_STORAGE_KEY = 'app-control-finance-v1';
 const LOGIN_ROUTE = '/';
 const APP_ROUTE = '/app';
 const AUTH_DEBUG = false;
+const AUTO_SYNC_INTERVAL_MS = 15000;
+const AUTO_SYNC_FOCUS_DEBOUNCE_MS = 1200;
 const componentModuleCache = new Map();
 
 function getE2EOverrides() {
@@ -256,6 +267,10 @@ function loadAdminPanelViewModule() {
     return loadComponentModule('admin-panel-view', () => import('./components/AdminPanelView.js'));
 }
 
+function loadAIChatViewModule() {
+    return loadComponentModule('ai-chat-view', () => import('./components/AIChatView.js'));
+}
+
 function authLog(...args) {
     if (!AUTH_DEBUG) return;
     console.log('[auth-debug]', ...args);
@@ -266,10 +281,12 @@ function getStoredTheme() {
     return AVAILABLE_THEMES.includes(theme) ? theme : 'niobio';
 }
 
-function applyTheme(themeId) {
+function applyTheme(themeId, options = {}) {
     const safeTheme = AVAILABLE_THEMES.includes(themeId) ? themeId : 'niobio';
     document.body.setAttribute('data-theme', safeTheme);
-    localStorage.setItem(THEME_STORAGE_KEY, safeTheme);
+    if (options.persistLocal !== false) {
+        localStorage.setItem(THEME_STORAGE_KEY, safeTheme);
+    }
     return safeTheme;
 }
 
@@ -278,9 +295,11 @@ function getStoredAlertDays() {
     return Number.isFinite(value) && value > 0 ? value : 15;
 }
 
-function saveAlertDays(days) {
+function saveAlertDays(days, options = {}) {
     const safeDays = Number.isFinite(Number(days)) ? Number(days) : 15;
-    localStorage.setItem(ALERT_STORAGE_KEY, String(safeDays));
+    if (options.persistLocal !== false) {
+        localStorage.setItem(ALERT_STORAGE_KEY, String(safeDays));
+    }
     return safeDays;
 }
 
@@ -293,6 +312,68 @@ function getHeaderGreeting(profile, fallbackEmail = '') {
     return `Olá, ${firstName}!`;
 }
 
+async function loadThemePreference(userId) {
+    const value = await loadUserPreference({
+        userId,
+        preferenceKey: USER_PREFERENCE_KEYS.THEME,
+        localStorageKey: THEME_STORAGE_KEY,
+        fallbackValue: 'niobio',
+        storageKind: 'string',
+        hasMeaningfulData: (theme) => AVAILABLE_THEMES.includes(String(theme || ''))
+    });
+    return AVAILABLE_THEMES.includes(String(value || '')) ? String(value) : 'niobio';
+}
+
+async function loadAlertLeadDaysPreference(userId) {
+    const value = await loadUserPreference({
+        userId,
+        preferenceKey: USER_PREFERENCE_KEYS.ALERT_LEAD_DAYS,
+        localStorageKey: ALERT_STORAGE_KEY,
+        fallbackValue: 15,
+        storageKind: 'string',
+        hasMeaningfulData: (days) => Number.isFinite(Number(days)) && Number(days) > 0
+    });
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : 15;
+}
+
+async function loadDashboardPreference(userId) {
+    return loadUserPreference({
+        userId,
+        organizationId: null,
+        preferenceKey: USER_PREFERENCE_KEYS.DASHBOARD_LAYOUT,
+        localStorageKey: getUserScopedStorageKey(DASHBOARD_WIDGETS_STORAGE_KEY, userId),
+        fallbackValue: null,
+        storageKind: 'json',
+        hasMeaningfulData: hasMeaningfulDashboardValue
+    });
+}
+
+async function saveDashboardPreference(userId, payload) {
+    return saveUserPreference({
+        userId,
+        organizationId: null,
+        preferenceKey: USER_PREFERENCE_KEYS.DASHBOARD_LAYOUT,
+        localStorageKey: getUserScopedStorageKey(DASHBOARD_WIDGETS_STORAGE_KEY, userId),
+        value: payload,
+        storageKind: 'json'
+    });
+}
+
+async function loadFinancePreference(userId, organizationId) {
+    return financeStore.getStateResult({
+        localStorageKey: getUserScopedStorageKey(FINANCE_STORAGE_KEY, userId),
+        fallbackValue: null
+    });
+}
+
+async function saveFinancePreference(userId, organizationId, payload) {
+    return financeStore.saveStateResult({
+        localStorageKey: getUserScopedStorageKey(FINANCE_STORAGE_KEY, userId),
+        state: payload
+    });
+}
+
 function renderViewLoading(container, message = 'Carregando modulo...') {
     if (!container) return;
     container.innerHTML = `
@@ -300,6 +381,30 @@ function renderViewLoading(container, message = 'Carregando modulo...') {
             <p class="label-tech">${message}</p>
         </div>
     `;
+}
+
+function showViewFeedback(host, message, tone = 'success', durationMs = 2600) {
+    if (!host) return;
+    const content = String(message || '').trim();
+    if (!content) {
+        host.innerHTML = '';
+        return;
+    }
+    if (host.__viewFeedbackTimer) {
+        window.clearTimeout(host.__viewFeedbackTimer);
+        host.__viewFeedbackTimer = null;
+    }
+    host.innerHTML = `
+        <div class="view-feedback view-feedback--${tone}" role="status" aria-live="polite">
+            ${content}
+        </div>
+    `;
+    host.__viewFeedbackTimer = window.setTimeout(() => {
+        host.__viewFeedbackTimer = null;
+        if (host.isConnected) {
+            host.innerHTML = '';
+        }
+    }, durationMs);
 }
 
 function buildEmergencyProfile(session) {
@@ -329,6 +434,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         currentTheme: applyTheme(getStoredTheme()),
         alertLeadDays: getStoredAlertDays()
     });
+    let financeUnloadGuard = {
+        shouldBlockUnload: false,
+        message: 'O financeiro ainda está sincronizando. Aguarde a confirmação antes de fechar a página.'
+    };
+    let autoSyncIntervalId = null;
+    let autoSyncDebounceId = null;
+    let autoSyncRunningPromise = null;
     let teamProfiles = [];
     let currentOrganizationId = null;
 
@@ -368,12 +480,37 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (e2eOverrides?.profile) {
             state.currentProfile = cloneE2EValue(e2eOverrides.profile, buildEmergencyProfile(state.currentSession));
+            if (e2eOverrides?.organization) {
+                state.currentOrganization = cloneE2EValue(e2eOverrides.organization, null);
+                state.currentOrganizationLoaded = true;
+            }
         } else {
             try {
-                state.currentProfile = await profileService.getProfile(state.currentSession.user.id);
+                const bootstrapData = await profileService.getBootstrap();
+                state.currentProfile = bootstrapData?.profile || buildEmergencyProfile(state.currentSession);
+                state.currentOrganization = bootstrapData?.organization || null;
+                state.currentOrganizationLoaded = true;
+                state.dashboardSummary = bootstrapData?.dashboardSummary || null;
+                if (bootstrapData?.preferences) {
+                    const bootstrapTheme = AVAILABLE_THEMES.includes(String(bootstrapData.preferences.theme || '').trim())
+                        ? String(bootstrapData.preferences.theme).trim()
+                        : 'niobio';
+                    const bootstrapAlertLeadDays = Number(bootstrapData.preferences.alertLeadDays);
+                    state.currentTheme = applyTheme(bootstrapTheme, { persistLocal: false });
+                    state.alertLeadDays = saveAlertDays(
+                        Number.isFinite(bootstrapAlertLeadDays) && bootstrapAlertLeadDays > 0 ? bootstrapAlertLeadDays : 15,
+                        { persistLocal: false }
+                    );
+                    state.preferencesLoaded = true;
+                }
             } catch (error) {
-                authLog('renderRoute:profile-fallback', error?.message || error);
-                state.currentProfile = buildEmergencyProfile(state.currentSession);
+                authLog('renderRoute:bootstrap-fallback', error?.message || error);
+                try {
+                    state.currentProfile = await profileService.getProfile(state.currentSession.user.id);
+                } catch (profileError) {
+                    authLog('renderRoute:profile-fallback', profileError?.message || profileError);
+                    state.currentProfile = buildEmergencyProfile(state.currentSession);
+                }
             }
         }
 
@@ -382,9 +519,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (hasSuperAdminAccess(state.currentProfile)) {
             state.currentOrganization = null;
-            state.currentOrganizationLoaded = true;
-        } else if (e2eOverrides?.organization) {
-            state.currentOrganization = cloneE2EValue(e2eOverrides.organization, null);
             state.currentOrganizationLoaded = true;
         } else if (!currentOrganizationId) {
             state.currentOrganization = null;
@@ -399,37 +533,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             state.currentOrganizationLoaded = true;
         }
-
-        let clientLoadResult;
-        let processLoadResult;
-        let projectLoadResult;
-        if (e2eOverrides) {
-            hydrateStoresFromE2E(e2eOverrides);
-            installE2EStoreAdapters();
-            clientLoadResult = { status: 'fulfilled' };
-            processLoadResult = { status: 'fulfilled' };
-            projectLoadResult = { status: 'fulfilled' };
-        } else {
-            [clientLoadResult, processLoadResult, projectLoadResult] = await Promise.allSettled([
-                clientStore.load(!state.hasRenderedProtectedApp),
-                processStore.load(!state.hasRenderedProtectedApp),
-                projectStore.load(!state.hasRenderedProtectedApp)
-            ]);
-        }
-
-        if (clientLoadResult.status === 'rejected') {
-            authLog('renderRoute:client-load-failed', clientLoadResult.reason?.message || clientLoadResult.reason);
-            clientStore.reset();
-        }
-
-        if (processLoadResult.status === 'rejected') {
-            authLog('renderRoute:process-load-failed', processLoadResult.reason?.message || processLoadResult.reason);
-            processStore.reset();
-        }
-
-        if (projectLoadResult.status === 'rejected') {
-            authLog('renderRoute:project-load-failed', projectLoadResult.reason?.message || projectLoadResult.reason);
-            projectStore.reset();
+        if (currentOrganizationId) {
+            setActiveOrganizationId(currentOrganizationId, state.currentOrganization?.slug);
         }
 
         if (!hasAdminAccess(state.currentProfile)) {
@@ -449,10 +554,237 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         renderAuthenticatedApp(state.currentSession);
+        void ensureUserPreferencesLoaded().catch((error) => {
+            authLog('renderRoute:preferences-background-failed', error?.message || error);
+        });
     };
 
     let shellRenderedForSession = null;
     const viewCache = new Map();
+    const coreDataRefreshSections = new Set(['painel', 'clientes', 'processos', 'prazos']);
+
+    function invalidateSectionView(sectionId) {
+        const cachedView = viewCache.get(sectionId);
+        if (cachedView) {
+            cachedView.initialized = false;
+        }
+    }
+
+    function invalidateCoreDataViews() {
+        ['painel', 'clientes', 'processos', 'prazos'].forEach((sectionId) => invalidateSectionView(sectionId));
+    }
+
+    function refreshCurrentSection(sectionId = state.currentSection) {
+        if (!state.currentSession || state.currentSection !== sectionId) return;
+        invalidateSectionView(sectionId);
+        window.setTimeout(() => {
+            renderRoute().catch((error) => {
+                reportUiError('navigation.refresh-current-section', error, { sectionId });
+            });
+        }, 0);
+    }
+
+    function canAutoRefreshCurrentSection(sectionId = state.currentSection) {
+        const mainContent = document.getElementById('main-content');
+        if (!mainContent) return false;
+        if (sectionId === 'clientes') {
+            return !mainContent.querySelector('.client-form-shell');
+        }
+        if (sectionId === 'processos') {
+            return !mainContent.querySelector('#process-form-element');
+        }
+        if (sectionId === 'financeiro') {
+            return !mainContent.querySelector('.finance-modal-card');
+        }
+        return true;
+    }
+
+    async function refreshFinanceStateInBackground() {
+        const localStorageKey = getUserScopedStorageKey(FINANCE_STORAGE_KEY, state.currentSession?.user?.id);
+        const cachedState = loadUserScopedJsonStorage(localStorageKey, null);
+        const cachedUpdatedAt = cachedState?.updatedAt || null;
+        const result = await loadFinancePreference(state.currentSession?.user?.id || null, currentOrganizationId);
+        const nextUpdatedAt = result?.updatedAt || result?.state?.updatedAt || null;
+        const hasChanged = Boolean(nextUpdatedAt) && nextUpdatedAt !== cachedUpdatedAt;
+        if (!hasChanged) return false;
+        invalidateSectionView('financeiro');
+        if (state.currentSection === 'financeiro' && canAutoRefreshCurrentSection('financeiro')) {
+            refreshCurrentSection('financeiro');
+        }
+        return true;
+    }
+
+    async function runAutomaticSync(reason = 'interval') {
+        if (e2eOverrides || !state.currentSession || document.hidden || autoSyncRunningPromise) return autoSyncRunningPromise;
+        autoSyncRunningPromise = (async () => {
+            let coreDataChanged = false;
+            try {
+                const [clientResult, processResult] = await Promise.all([
+                    clientStore.load(true),
+                    processStore.load(true)
+                ]);
+                await projectStore.load(true);
+                coreDataChanged = Boolean(clientResult?.changed || processResult?.changed);
+                state.coreDataLoaded = true;
+                if (coreDataChanged) {
+                    invalidateCoreDataViews();
+                    if (coreDataRefreshSections.has(state.currentSection) && canAutoRefreshCurrentSection(state.currentSection)) {
+                        refreshCurrentSection(state.currentSection);
+                    }
+                }
+            } catch (error) {
+                reportUiError('auto-sync.core-data', error, { reason });
+            }
+
+            try {
+                if (!financeUnloadGuard.shouldBlockUnload) {
+                    await refreshFinanceStateInBackground();
+                }
+            } catch (error) {
+                reportUiError('auto-sync.finance', error, { reason });
+            }
+        })()
+            .finally(() => {
+                autoSyncRunningPromise = null;
+            });
+
+        return autoSyncRunningPromise;
+    }
+
+    function scheduleAutomaticSync(reason = 'focus') {
+        if (e2eOverrides || !state.currentSession) return;
+        if (autoSyncDebounceId) {
+            window.clearTimeout(autoSyncDebounceId);
+        }
+        autoSyncDebounceId = window.setTimeout(() => {
+            autoSyncDebounceId = null;
+            void runAutomaticSync(reason);
+        }, AUTO_SYNC_FOCUS_DEBOUNCE_MS);
+    }
+
+    function stopAutomaticSync() {
+        if (autoSyncIntervalId) {
+            window.clearInterval(autoSyncIntervalId);
+            autoSyncIntervalId = null;
+        }
+        if (autoSyncDebounceId) {
+            window.clearTimeout(autoSyncDebounceId);
+            autoSyncDebounceId = null;
+        }
+    }
+
+    function startAutomaticSync() {
+        if (e2eOverrides || !state.currentSession) return;
+        stopAutomaticSync();
+        autoSyncIntervalId = window.setInterval(() => {
+            void runAutomaticSync('interval');
+        }, AUTO_SYNC_INTERVAL_MS);
+    }
+
+    async function ensureUserPreferencesLoaded(force = false) {
+        if (state.preferencesLoaded && !force) return state.preferencesBootstrapPromise || Promise.resolve();
+        if (state.preferencesLoading && !force && state.preferencesBootstrapPromise) return state.preferencesBootstrapPromise;
+
+        const sessionUserId = state.currentSession?.user?.id || null;
+        state.preferencesLoading = true;
+        state.preferencesBootstrapPromise = (async () => {
+            const [syncedTheme, syncedAlertLeadDays] = await Promise.all([
+                loadThemePreference(sessionUserId),
+                loadAlertLeadDaysPreference(sessionUserId)
+            ]);
+
+            if (sessionUserId !== (state.currentSession?.user?.id || null)) return;
+
+            const nextTheme = applyTheme(syncedTheme, { persistLocal: false });
+            const nextAlertLeadDays = saveAlertDays(syncedAlertLeadDays, { persistLocal: false });
+            const themeChanged = nextTheme !== state.currentTheme;
+            const alertDaysChanged = nextAlertLeadDays !== state.alertLeadDays;
+
+            state.currentTheme = nextTheme;
+            state.alertLeadDays = nextAlertLeadDays;
+            state.preferencesLoaded = true;
+
+            if ((themeChanged || alertDaysChanged) && state.currentSession) {
+                renderAuthenticatedApp(state.currentSession);
+            }
+        })()
+            .catch((error) => {
+                authLog('preferences-load-failed', error?.message || error);
+                throw error;
+            })
+            .finally(() => {
+                state.preferencesLoading = false;
+            });
+
+        return state.preferencesBootstrapPromise;
+    }
+
+    async function ensureCoreDataLoaded(force = false) {
+        if (state.coreDataLoaded && !force) return state.coreDataBootstrapPromise || Promise.resolve();
+        if (state.coreDataLoading && !force && state.coreDataBootstrapPromise) return state.coreDataBootstrapPromise;
+
+        const sessionUserId = state.currentSession?.user?.id || null;
+        state.coreDataLoading = true;
+        state.coreDataBootstrapPromise = (async () => {
+            let clientLoadResult;
+            let processLoadResult;
+            let projectLoadResult;
+            let coreDataChanged = false;
+
+            if (e2eOverrides) {
+                hydrateStoresFromE2E(e2eOverrides);
+                installE2EStoreAdapters();
+                clientLoadResult = { status: 'fulfilled' };
+                processLoadResult = { status: 'fulfilled' };
+                projectLoadResult = { status: 'fulfilled' };
+            } else {
+                [clientLoadResult, processLoadResult, projectLoadResult] = await Promise.allSettled([
+                    clientStore.load(force),
+                    processStore.load(force),
+                    projectStore.load(force)
+                ]);
+            }
+
+            if (clientLoadResult.status === 'rejected') {
+                authLog('core-data:client-load-failed', clientLoadResult.reason?.message || clientLoadResult.reason);
+                clientStore.reset();
+            }
+
+            if (processLoadResult.status === 'rejected') {
+                authLog('core-data:process-load-failed', processLoadResult.reason?.message || processLoadResult.reason);
+                processStore.reset();
+            }
+
+            if (projectLoadResult.status === 'rejected') {
+                authLog('core-data:project-load-failed', projectLoadResult.reason?.message || projectLoadResult.reason);
+                projectStore.reset();
+            }
+
+            coreDataChanged = force && (
+                (clientLoadResult.status === 'fulfilled' && clientLoadResult.value?.changed)
+                || (processLoadResult.status === 'fulfilled' && processLoadResult.value?.changed)
+            );
+
+            if (sessionUserId !== (state.currentSession?.user?.id || null)) return;
+
+            state.coreDataLoaded = true;
+            if (coreDataChanged) {
+                invalidateCoreDataViews();
+            }
+            if (coreDataChanged && coreDataRefreshSections.has(state.currentSection) && canAutoRefreshCurrentSection(state.currentSection)) {
+                refreshCurrentSection(state.currentSection);
+            }
+        })()
+            .catch((error) => {
+                authLog('core-data:bootstrap-failed', error?.message || error);
+                throw error;
+            })
+            .finally(() => {
+                state.coreDataLoading = false;
+            });
+
+        return state.coreDataBootstrapPromise;
+    }
 
     const renderAuthenticatedApp = (session) => {
         authLog('renderAuthenticatedApp', {
@@ -460,9 +792,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             sessionUserId: session?.user?.id || null
         });
         state.disposeHeaderMenu?.();
-        const isAdmin = hasOfficeAdminAccess(state.currentProfile);
+        const isAdmin = hasAdminAccess(state.currentProfile);
         const isSuperAdmin = hasSuperAdminAccess(state.currentProfile);
-        const visibleSections = ['organizacoes', 'painel', 'clientes', 'processos', 'prazos', 'financeiro', 'admin-panel', 'configuracoes']
+        const visibleSections = ['organizacoes', 'ia-chat', 'painel', 'clientes', 'processos', 'prazos', 'financeiro', 'admin-panel', 'configuracoes']
             .filter((sectionId) => canViewSection(state.currentProfile, sectionId, state.currentOrganization?.enabled_modules));
         const displayName = getProfileDisplayName(state.currentProfile, session?.user?.email || '');
         const headerGreeting = getHeaderGreeting(state.currentProfile, session?.user?.email || '');
@@ -540,7 +872,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // DOM selectors removed tracking individually inside viewCache
 
         const ensureTeamProfilesLoaded = async (force = false) => {
-            if (!hasOfficeAdminAccess(state.currentProfile)) {
+            if (!hasAdminAccess(state.currentProfile)) {
                 teamProfiles = [];
                 state.teamProfilesLoaded = false;
                 return [];
@@ -584,7 +916,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (id !== 'equipe' && !canViewSection(state.currentProfile, id, state.currentOrganization?.enabled_modules)) {
                 authLog('navigate:blocked by permission', { id, role: state.currentProfile?.role });
                 showNoticeModal('Acesso restrito', 'Seu perfil não possui acesso a esta área.');
-                void navigate(hasSuperAdminAccess(state.currentProfile) ? 'organizacoes' : 'painel');
+                const fallbackSection = getPreferredVisibleSection(state.currentProfile, visibleSections);
+                if (fallbackSection && fallbackSection !== id) {
+                    void navigate(fallbackSection);
+                }
                 return;
             }
 
@@ -639,7 +974,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     viewHeader.style.display = 'flex';
                     viewHeader.style.justifyContent = 'space-between';
                     viewHeader.classList.add('view-header-floating-left');
-                } else if (['clientes', 'processos', 'prazos', 'financeiro', 'equipe', 'configuracoes', 'admin-panel'].includes(id)) {
+                } else if (['ia-chat', 'clientes', 'processos', 'prazos', 'financeiro', 'equipe', 'configuracoes', 'admin-panel'].includes(id)) {
                     viewHeader.style.display = 'flex';
                     viewHeader.style.justifyContent = 'flex-end';
                     viewHeader.classList.remove('view-header-floating-left');
@@ -749,26 +1084,68 @@ document.addEventListener('DOMContentLoaded', async () => {
                 renderDashboard(
                     contentArea,
                     viewActionsLeft,
-                    getUserScopedStorageKey(DASHBOARD_WIDGETS_STORAGE_KEY, state.currentSession?.user?.id),
-                    state.alertLeadDays
+                    {
+                        storageKey: getUserScopedStorageKey(DASHBOARD_WIDGETS_STORAGE_KEY, state.currentSession?.user?.id),
+                        initialPayload: await loadDashboardPreference(state.currentSession?.user?.id || null),
+                        onPersist: (payload) => saveDashboardPreference(state.currentSession?.user?.id || null, payload),
+                        deadlineAlertDays: state.alertLeadDays,
+                        summarySnapshot: state.dashboardSummary
+                    }
                 );
+            } else if (id === 'ia-chat') {
+                if (viewHeader) viewHeader.style.display = 'flex';
+                if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
+                if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
+                renderViewLoading(contentArea, 'Carregando chat global...');
+                const { renderAIChatView } = await loadAIChatViewModule();
+                if (navigationId !== navigationSequence || state.currentSection !== id) return;
+                renderAIChatView(contentArea, {
+                    userId: state.currentSession?.user?.id || null,
+                    organizationId: currentOrganizationId,
+                    loadDashboardState: () => loadDashboardPreference(state.currentSession?.user?.id || null),
+                    saveDashboardState: (payload) => saveDashboardPreference(state.currentSession?.user?.id || null, payload)
+                });
             } else if (id === 'clientes') {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
                 renderViewLoading(contentArea, 'Carregando titulares...');
+                if (!state.coreDataLoaded) {
+                    try {
+                        await ensureCoreDataLoaded();
+                    } catch (error) {
+                        showNoticeModal('Erro ao carregar dados', error?.message || 'Não foi possível carregar os titulares.');
+                    }
+                    if (navigationId !== navigationSequence || state.currentSection !== id) return;
+                }
                 await renderClientesView(contentArea, viewActions, navigationId);
             } else if (id === 'processos') {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
                 renderViewLoading(contentArea, 'Carregando processos...');
+                if (!state.coreDataLoaded) {
+                    try {
+                        await ensureCoreDataLoaded();
+                    } catch (error) {
+                        showNoticeModal('Erro ao carregar dados', error?.message || 'Não foi possível carregar os processos.');
+                    }
+                    if (navigationId !== navigationSequence || state.currentSection !== id) return;
+                }
                 await renderProcessosView(contentArea, viewActions, navigationId);
             } else if (id === 'prazos') {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
                 renderViewLoading(contentArea, 'Carregando painel de prazos...');
+                if (!state.coreDataLoaded) {
+                    try {
+                        await ensureCoreDataLoaded();
+                    } catch (error) {
+                        showNoticeModal('Erro ao carregar dados', error?.message || 'Não foi possível carregar os prazos.');
+                    }
+                    if (navigationId !== navigationSequence || state.currentSection !== id) return;
+                }
                 if (navigationId !== navigationSequence || state.currentSection !== id) return;
                 const { renderDeadlineDashboard } = await loadDeadlineDashboardModule();
                 if (navigationId !== navigationSequence || state.currentSection !== id) return;
@@ -805,6 +1182,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                     availableModules: state.currentOrganization?.enabled_modules || [],
                     onThemeChange: (themeId) => {
                         state.currentTheme = applyTheme(themeId);
+                        void saveUserPreference({
+                            userId: state.currentSession?.user?.id || null,
+                            organizationId: null,
+                            preferenceKey: USER_PREFERENCE_KEYS.THEME,
+                            localStorageKey: THEME_STORAGE_KEY,
+                            value: state.currentTheme,
+                            storageKind: 'string'
+                        });
                     },
                     onProfileSave: async (payload) => {
                         try {
@@ -817,6 +1202,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                     },
                     onAlertSave: async (days) => {
                         state.alertLeadDays = saveAlertDays(days);
+                        await saveUserPreference({
+                            userId: state.currentSession?.user?.id || null,
+                            organizationId: null,
+                            preferenceKey: USER_PREFERENCE_KEYS.ALERT_LEAD_DAYS,
+                            localStorageKey: ALERT_STORAGE_KEY,
+                            value: state.alertLeadDays,
+                            storageKind: 'string'
+                        });
                         showNoticeModal('Alertas atualizados', `Os avisos de vencimento agora usarão ${state.alertLeadDays} dias de antecedência.`);
                         renderAuthenticatedApp(state.currentSession);
                     },
@@ -869,7 +1262,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
                 
                 if (!isAdmin) {
-                    void navigate('painel');
+                    const fallbackSection = getPreferredVisibleSection(state.currentProfile, visibleSections);
+                    if (fallbackSection && fallbackSection !== id) {
+                        void navigate(fallbackSection);
+                    }
                     return;
                 }
 
@@ -928,18 +1324,35 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (navigationId !== navigationSequence || state.currentSection !== id) return;
                 renderFinanceiroView(
                     contentArea,
-                    getUserScopedStorageKey(FINANCE_STORAGE_KEY, state.currentSession?.user?.id)
+                    {
+                        storageKey: getUserScopedStorageKey(FINANCE_STORAGE_KEY, state.currentSession?.user?.id),
+                        initialState: await loadFinancePreference(state.currentSession?.user?.id || null, currentOrganizationId),
+                        onPersist: (payload) => saveFinancePreference(state.currentSession?.user?.id || null, currentOrganizationId, payload),
+                        onReload: () => loadFinancePreference(state.currentSession?.user?.id || null, currentOrganizationId),
+                        onSyncStateChange: ({ shouldBlockUnload = false } = {}) => {
+                            financeUnloadGuard = {
+                                shouldBlockUnload: !!shouldBlockUnload,
+                                message: 'O financeiro ainda está sincronizando. Aguarde a confirmação antes de fechar a página.'
+                            };
+                        }
+                    }
                 );
             } else if (id === 'equipe') {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
                 if (!isAdmin) {
-                    void navigate(hasSuperAdminAccess(state.currentProfile) ? 'organizacoes' : 'painel');
+                    const fallbackSection = getPreferredVisibleSection(state.currentProfile, visibleSections);
+                    if (fallbackSection && fallbackSection !== id) {
+                        void navigate(fallbackSection);
+                    }
                     return;
                 }
                 if (!canViewSection(state.currentProfile, 'configuracoes', state.currentOrganization?.enabled_modules)) {
-                    void navigate(hasSuperAdminAccess(state.currentProfile) ? 'organizacoes' : 'painel');
+                    const fallbackSection = getPreferredVisibleSection(state.currentProfile, visibleSections);
+                    if (fallbackSection && fallbackSection !== id) {
+                        void navigate(fallbackSection);
+                    }
                     return;
                 }
                 renderViewLoading(contentArea, 'Carregando equipe...');
@@ -996,11 +1409,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         };
 
-        async function renderProcessosView(container, actionsContainer, navigationId = navigationSequence) {
+        async function renderProcessosView(container, actionsContainer, navigationId = navigationSequence, restoreContext = {}) {
             const { renderProcessList } = await loadProcessListModule();
             if (navigationId !== navigationSequence || state.currentSection !== 'processos') return;
+            const processView = viewCache.get('processos');
+            const showProcessFeedback = (message, tone = 'success') => showViewFeedback(processView?.viewActionsLeft, message, tone);
 
-            const renderList = (restoreClientId = null, restoreProjectId = null) => {
+            const renderList = (
+                restoreClientId = restoreContext.restoreClientId ?? null,
+                restoreProjectId = restoreContext.restoreProjectId ?? null,
+                restoreProcessId = restoreContext.restoreProcessId ?? null
+            ) => {
                 renderProcessList(container, actionsContainer,
                     (clientId, projectId) => showAddProcess(container, actionsContainer, renderList, clientId, projectId),
                     (processId, clientId, projectId, action) => {
@@ -1019,7 +1438,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     restoreProjectId,
                     {
                         canEdit: canEditContent(state.currentProfile),
-                        canDelete: canDeleteContent(state.currentProfile)
+                        canDelete: canDeleteContent(state.currentProfile),
+                        onFeedback: showProcessFeedback,
+                        initialProcessId: restoreProcessId
                     }
                 );
             };
@@ -1058,8 +1479,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                             showNoticeModal('Erro ao salvar', 'Não foi possível atualizar este processo.');
                             return;
                         }
-                        showNoticeModal('Processo atualizado', 'As alterações foram salvas com sucesso.');
-                        onComplete();
+                        showViewFeedback(viewCache.get('processos')?.viewActionsLeft, 'Processo atualizado com sucesso.');
+                        void renderProcessosView(container, actionsContainer, navigationSequence, {
+                            restoreClientId: process.clientId || null,
+                            restoreProjectId: process.projectId || null,
+                            restoreProcessId: processId
+                        })
+                            .then(() => {
+                                onComplete();
+                            });
                     })
                     .catch((error) => {
                         showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível atualizar este processo.');
@@ -1075,6 +1503,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             renderProcessForm(contentPanel, async (data) => {
                 try {
                     const createdProcess = await processStore.addProcess(data);
+                    showViewFeedback(viewCache.get('processos')?.viewActionsLeft, 'Processo criado com sucesso.');
                     onComplete(createdProcess?.clientId || null, createdProcess?.projectId || null);
                 } catch (error) {
                     showNoticeModal('Erro ao salvar', error?.message || 'Não foi possível salvar o processo.');
@@ -1085,6 +1514,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         async function renderClientesView(container, actionsContainer, navigationId = navigationSequence) {
             const { renderClientList } = await loadClientListModule();
             if (navigationId !== navigationSequence || state.currentSection !== 'clientes') return;
+            const clientView = viewCache.get('clientes');
+            const showClientFeedback = (message, tone = 'success') => showViewFeedback(clientView?.viewActionsLeft, message, tone);
 
             const renderList = () => {
                 actionsContainer.innerHTML = '';
@@ -1093,7 +1524,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     () => showAddClient(container, actionsContainer, renderList),
                     {
                         canEdit: canEditContent(state.currentProfile),
-                        canDelete: canDeleteContent(state.currentProfile)
+                        canDelete: canDeleteContent(state.currentProfile),
+                        onFeedback: showClientFeedback
                     }
                 );
             };
@@ -1108,6 +1540,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 async (data) => {
                     try {
                         await clientStore.addClient(data);
+                        showViewFeedback(viewCache.get('clientes')?.viewActionsLeft, 'Titular criado com sucesso.');
                         onComplete();
                     } catch (error) {
                         showNoticeModal('Não foi possível salvar', error?.message || 'Falha ao criar o titular.');
@@ -1125,6 +1558,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 async (data) => {
                     try {
                         await clientStore.updateClient(client.id, data);
+                        showViewFeedback(viewCache.get('clientes')?.viewActionsLeft, 'Titular atualizado com sucesso.');
                         onComplete();
                     } catch (error) {
                         showNoticeModal('Não foi possível salvar', error?.message || 'Falha ao atualizar o titular.');
@@ -1136,8 +1570,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         initDock(navigate);
-        const defaultSection = ['organizacoes', 'painel', 'clientes', 'processos', 'prazos', 'configuracoes']
-            .find((sectionId) => canViewSection(state.currentProfile, sectionId, state.currentOrganization?.enabled_modules)) || 'painel';
+        const defaultSection = getPreferredVisibleSection(state.currentProfile, visibleSections) || 'painel';
         const targetSection = canViewSection(state.currentProfile, state.currentSection, state.currentOrganization?.enabled_modules)
             ? state.currentSection
             : defaultSection;
@@ -1173,6 +1606,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         state.currentSession = session;
         if (!session) {
+            stopAutomaticSync();
             state.currentProfile = null;
             teamProfiles = [];
             state.teamProfilesLoaded = false;
@@ -1180,6 +1614,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             state.organizationsLoaded = false;
             state.currentOrganization = null;
             state.currentOrganizationLoaded = false;
+            state.dashboardSummary = null;
+            state.coreDataLoaded = false;
+            state.coreDataLoading = false;
+            state.coreDataBootstrapPromise = null;
+            state.preferencesLoaded = false;
+            state.preferencesLoading = false;
+            state.preferencesBootstrapPromise = null;
             clientStore.reset();
             processStore.reset();
             projectStore.reset();
@@ -1189,6 +1630,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             navigateTo(LOGIN_ROUTE, true);
         } else {
             navigateTo(APP_ROUTE, true);
+            startAutomaticSync();
+            scheduleAutomaticSync('auth-state');
         }
         await renderRoute();
     };
@@ -1211,6 +1654,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     });
 
+    window.addEventListener('app-control:navigate', (event) => {
+        const targetSection = event?.detail?.section;
+        if (!targetSection || !state.currentSession) return;
+        navigate(targetSection).catch((error) => {
+            reportUiError('navigation.external', error, { targetSection });
+        });
+    });
+
+    window.addEventListener('focus', () => {
+        scheduleAutomaticSync('window-focus');
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            scheduleAutomaticSync('visibility-visible');
+        }
+    });
+
     try {
         state.currentSession = e2eOverrides?.session
             ? cloneE2EValue(e2eOverrides.session, null)
@@ -1230,6 +1691,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             navigateTo(LOGIN_ROUTE, true);
         }
         await renderRoute();
+        if (state.currentSession) {
+            startAutomaticSync();
+            scheduleAutomaticSync('bootstrap');
+        }
     } catch (error) {
         authLog('bootstrap:error', error);
         reportUiError('bootstrap.session-load', error, { pathname: window.location.pathname });
@@ -1247,13 +1712,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         authLog('bootstrap:done');
     }
 
-    window.addEventListener('beforeunload', () => {
+    window.addEventListener('beforeunload', (event) => {
+        if (financeUnloadGuard.shouldBlockUnload) {
+            event.preventDefault();
+            event.returnValue = financeUnloadGuard.message;
+            return financeUnloadGuard.message;
+        }
         authSubscription?.subscription?.unsubscribe?.();
     });
 });
 
 function getSectionIcon(id) {
     const icons = {
+        'ia-chat': `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"></path><path d="M5 3v3"></path><path d="M3.5 4.5h3"></path><path d="M19 18v3"></path><path d="M17.5 19.5h3"></path></svg>`,
         painel: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>`,
         clientes: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`,
         processos: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>`,

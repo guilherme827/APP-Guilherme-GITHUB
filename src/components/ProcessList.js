@@ -72,10 +72,15 @@ function chevronIcon() {
 }
 
 export function renderProcessList(container, actionsContainer, onAddProcess, onViewProcess, initialClientId = null, initialProjectId = null, options = {}) {
-    let currentProcessId = null;
+    let currentProcessId = options.initialProcessId != null ? String(options.initialProcessId) : null;
     let query = '';
     const canEdit = options.canEdit !== false;
     const canDelete = options.canDelete === true;
+    const notifyFeedback = typeof options.onFeedback === 'function' ? options.onFeedback : null;
+    const expandedClientIds = new Set(initialClientId != null ? [String(initialClientId)] : []);
+    const expandedProjectIds = new Set(initialProjectId != null ? [String(initialProjectId)] : []);
+    let currentClientContextId = initialClientId != null ? String(initialClientId) : null;
+    let currentProjectContextId = initialProjectId != null ? String(initialProjectId) : null;
 
     const getClientName = (client) => (client?.type === 'PF' ? client?.nome : client?.nomeFantasia) || 'Titular';
     const getClientDocument = (client) => (client?.type === 'PF' ? client?.cpf : client?.cnpj) || 'Documento nao informado';
@@ -119,7 +124,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
 
     const renderProcessTable = (processes, clientId, projectId = null) => {
         const tableCard = document.createElement('div');
-        tableCard.className = 'glass-card animate-fade-in';
+        tableCard.className = 'glass-card';
         tableCard.style.padding = '0.5rem';
 
         tableCard.innerHTML = `
@@ -281,6 +286,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                                     showNoticeModal('Erro ao excluir', 'Não foi possível excluir o processo.');
                                     return;
                                 }
+                                notifyFeedback?.('Processo excluido com sucesso.');
                                 renderTree();
                                 currentProcessId = null;
                                 if (getClientProcessTargets(clientId).length > 0) {
@@ -315,6 +321,8 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
     };
 
     const renderClientOverview = (clientId) => {
+        currentClientContextId = String(clientId);
+        currentProjectContextId = null;
         const contentPanel = container.querySelector('#process-content-panel');
         const client = clientStore.clients.find((item) => String(item.id) === String(clientId));
         if (!contentPanel || !client) return;
@@ -324,7 +332,6 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
         contentPanel.innerHTML = '';
 
         const shell = document.createElement('div');
-        shell.className = 'animate-fade-in';
         shell.style.cssText = 'padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem;';
 
         const hero = document.createElement('div');
@@ -477,6 +484,8 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
         });
 
     const renderProjectExtract = (clientId, projectId) => {
+        currentClientContextId = String(clientId);
+        currentProjectContextId = String(projectId);
         const contentPanel = container.querySelector('#process-content-panel');
         const client = clientStore.clients.find((item) => String(item.id) === String(clientId));
         const project = projectStore.getProjectsByClient(clientId).find((item) => String(item.id) === String(projectId));
@@ -487,7 +496,6 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
         contentPanel.innerHTML = '';
 
         const shell = document.createElement('div');
-        shell.className = 'animate-fade-in';
         shell.style.cssText = 'padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem;';
 
         const header = document.createElement('div');
@@ -554,6 +562,8 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
     };
 
     const renderProjectProcesses = (clientId, projectId) => {
+        currentClientContextId = String(clientId);
+        currentProjectContextId = String(projectId);
         const contentPanel = container.querySelector('#process-content-panel');
         const client = clientStore.clients.find((item) => String(item.id) === String(clientId));
         const project = projectStore.getProjectsByClient(clientId).find((item) => String(item.id) === String(projectId));
@@ -563,7 +573,6 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
         contentPanel.innerHTML = '';
 
         const shell = document.createElement('div');
-        shell.className = 'animate-fade-in';
         shell.style.cssText = 'padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem;';
 
         const header = document.createElement('div');
@@ -683,7 +692,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
     const renderEmptyState = (contentPanel, title, subtitle) => {
         contentPanel.innerHTML = `
             <div style="height: 100%; display: flex; align-items: center; justify-content: center; padding: 4rem;">
-                <div class="glass-card animate-fade-in" style="padding: 4rem; text-align: center; border: 1px dashed var(--slate-200); max-width: 500px;">
+                <div class="glass-card" style="padding: 4rem; text-align: center; border: 1px dashed var(--slate-200); max-width: 500px;">
                     <p class="label-tech" style="color: var(--slate-400);">${escapeHtml(title)}</p>
                     <p style="color: var(--slate-500); margin-top: 1rem;">${escapeHtml(subtitle)}</p>
                 </div>
@@ -704,6 +713,10 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
             buttonElement.classList.add('is-active');
             
             currentProcessId = String(processId);
+            currentClientContextId = clientId != null ? String(clientId) : currentClientContextId;
+            currentProjectContextId = projectId != null ? String(projectId) : null;
+            if (clientId != null) expandedClientIds.add(String(clientId));
+            if (projectId != null) expandedProjectIds.add(String(projectId));
             if (typeof onViewProcess === 'function') {
                 onViewProcess(processId, clientId, projectId);
             }
@@ -719,17 +732,25 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
             if (isHidden) {
                 childContainer.classList.remove('hidden');
                 if (chevron) chevron.classList.add('expanded');
+                if (clientId && !projectId) expandedClientIds.add(String(clientId));
+                if (projectId) expandedProjectIds.add(String(projectId));
             } else {
                 childContainer.classList.add('hidden');
                 if (chevron) chevron.classList.remove('expanded');
+                if (clientId && !projectId) expandedClientIds.delete(String(clientId));
+                if (projectId) expandedProjectIds.delete(String(projectId));
             }
         }
 
         if (clientId && !projectId) {
+            currentClientContextId = String(clientId);
+            currentProjectContextId = null;
             const clientTargets = getClientProcessTargets(String(clientId));
             if (clientTargets.length === 1 && typeof onViewProcess === 'function') {
                 const target = clientTargets[0];
                 currentProcessId = target.processId;
+                expandedClientIds.add(String(clientId));
+                if (target.projectId) expandedProjectIds.add(String(target.projectId));
                 onViewProcess(target.processId, clientId, target.projectId);
                 return;
             }
@@ -738,6 +759,8 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
         }
 
         if (clientId && projectId) {
+            currentClientContextId = String(clientId);
+            currentProjectContextId = String(projectId);
             renderProjectProcesses(String(clientId), String(projectId));
             return;
         }
@@ -786,6 +809,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
             
             // Filtrar visibilidade pela search ajuda a deixar tudo expandido se buscou
             const forceExpand = query.length > 0;
+            const isClientExpanded = forceExpand || expandedClientIds.has(clientId) || currentClientContextId === clientId;
 
             clientDiv.innerHTML = `
                 <button type="button" class="tree-node-btn group" id="btn-client-${clientId}">
@@ -804,7 +828,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                         </div>
                     ` : ''}
                 </button>
-                <ul class="tree-child-container ${forceExpand ? '' : 'hidden'}" id="${clientChildContainerId}"></ul>
+                <ul class="tree-child-container ${isClientExpanded ? '' : 'hidden'}" id="${clientChildContainerId}"></ul>
             `;
             
             const btnClient = clientDiv.querySelector(`#btn-client-${clientId}`);
@@ -818,7 +842,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                 });
             }
 
-            if (forceExpand) {
+            if (isClientExpanded) {
                 const chevron = btnClient.querySelector('.tree-chevron');
                 if (chevron) chevron.classList.add('expanded');
             }
@@ -831,6 +855,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                 const projectProcesses = getProcessesForProject(clientId, project);
                 const projectChildContainerId = `child-proj-${projectId}`;
                 const projectLi = document.createElement('li');
+                const isProjectExpanded = forceExpand || expandedProjectIds.has(projectId) || currentProjectContextId === projectId;
                 
                 projectLi.innerHTML = `
                     <button type="button" class="tree-node-btn group" id="btn-proj-${projectId}">
@@ -847,7 +872,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                             </div>
                         ` : ''}
                     </button>
-                    <ul class="tree-child-container ${forceExpand ? '' : 'hidden'}" id="${projectChildContainerId}"></ul>
+                    <ul class="tree-child-container ${isProjectExpanded ? '' : 'hidden'}" id="${projectChildContainerId}"></ul>
                 `;
 
                 const btnProj = projectLi.querySelector(`#btn-proj-${projectId}`);
@@ -861,7 +886,7 @@ export function renderProcessList(container, actionsContainer, onAddProcess, onV
                     });
                 }
 
-                if (forceExpand) {
+                if (isProjectExpanded) {
                     const chevron = btnProj.querySelector('.tree-chevron');
                     if (chevron) chevron.classList.add('expanded');
                 }

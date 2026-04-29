@@ -1,7 +1,12 @@
 const { defineConfig, loadEnv } = require('vite');
 const accountHandler = require('./server/accountHandler.cjs');
+const bootstrapHandler = require('./server/bootstrapHandler.cjs');
+const financeHandler = require('./server/financeHandler.cjs');
 const adminBackupHandler = require('./server/adminBackupHandler.cjs');
 const activityLogsHandler = require('./server/activityLogsHandler.cjs');
+const aiAgentRunHandler = require('./server/aiAgentRunHandler.cjs');
+const aiControlHandler = require('./server/aiControlHandler.cjs');
+const aiKnowledgeHandler = require('./server/aiKnowledgeHandler.cjs');
 const aiAnalyzeHandler = require('./server/aiAnalyzeHandler.cjs');
 const clientsHandler = require('./server/clientsHandler.cjs');
 const loginSupportHandler = require('./server/loginSupportHandler.cjs');
@@ -18,11 +23,26 @@ function teamMembersPlugin(env) {
             server.middlewares.use('/api/account', async (req, res) => {
                 await accountHandler(req, res, env);
             });
+            server.middlewares.use('/api/bootstrap', async (req, res) => {
+                await bootstrapHandler(req, res, env);
+            });
+            server.middlewares.use('/api/finance', async (req, res) => {
+                await financeHandler(req, res, env);
+            });
             server.middlewares.use('/api/admin-backup', async (req, res) => {
                 await adminBackupHandler(req, res, env);
             });
             server.middlewares.use('/api/activity-logs', async (req, res) => {
                 await activityLogsHandler(req, res, env);
+            });
+            server.middlewares.use('/api/ai-agent-run', async (req, res) => {
+                await aiAgentRunHandler(req, res, env);
+            });
+            server.middlewares.use('/api/ai-control', async (req, res) => {
+                await aiControlHandler(req, res, env);
+            });
+            server.middlewares.use('/api/ai-knowledge', async (req, res) => {
+                await aiKnowledgeHandler(req, res, env);
             });
             server.middlewares.use('/api/clients', async (req, res) => {
                 await clientsHandler(req, res, env);

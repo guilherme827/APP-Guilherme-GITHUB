@@ -271,7 +271,7 @@ export function renderProcessForm(container, onSave, onCancel, editData = null, 
         container.innerHTML = `
             <div class="glass-card animate-fade-in" style="max-width: 800px; margin: 4rem auto; padding: 4rem; text-align: center;">
                 <div class="ai-loader" style="width: 80px; height: 80px; border-radius: 50%; border: 4px solid var(--slate-100); border-top-color: var(--primary); margin: 0 auto; animation: spin 1s linear infinite;"></div>
-                <h3 class="font-black" style="margin-top: 2rem; font-size: 1.5rem;">O Gemini está analisando o arquivo...</h3>
+                <h3 class="font-black" style="margin-top: 2rem; font-size: 1.5rem;">O agente Técnico está analisando o arquivo...</h3>
                 <p class="label-tech" style="margin-top: 1rem; color: var(--primary);">EXTRAINDO DADOS E LISTANDO PRAZOS</p>
                 <div style="margin-top: 3rem; background: var(--bg-main); padding: 2rem; border-radius: 24px; text-align: left;">
                     <div id="ai-status-text" class="label-tech" style="margin-bottom: 1rem;">INICIANDO CONVERSÃO...</div>

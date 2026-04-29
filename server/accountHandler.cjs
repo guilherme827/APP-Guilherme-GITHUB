@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const accessPolicy = require('../shared/accessPolicy.cjs');
 
 function sendJson(res, statusCode, payload) {
     res.statusCode = statusCode;
@@ -59,43 +60,16 @@ async function authenticateUser(req, env) {
     return { user: authData.user, serviceClient };
 }
 
-const DEFAULT_USER_FOLDERS = ['painel', 'clientes', 'processos', 'prazos', 'configuracoes'];
-const ADMIN_FOLDERS = ['painel', 'clientes', 'processos', 'prazos', 'financeiro', 'admin-panel', 'configuracoes'];
-const ADMIN_EMAIL_FALLBACKS = ['guilherme@geoconsultpa.com'];
-
 function normalizePermissions(permissions, role = 'user') {
-    if (role === 'admin' || role === 'super_admin') {
-        return { view: true, edit: true, delete: true };
-    }
-    return {
-        view: permissions?.view !== false,
-        edit: permissions?.edit === true,
-        delete: permissions?.delete === true
-    };
+    return accessPolicy.normalizePermissions(permissions, role);
 }
 
 function normalizeFolderAccess(folderAccess, role = 'user') {
-    if (!Array.isArray(folderAccess) || folderAccess.length === 0) {
-        return role === 'admin' || role === 'super_admin' ? [...ADMIN_FOLDERS] : [...DEFAULT_USER_FOLDERS];
-    }
-    const normalized = [...new Set(folderAccess.filter(Boolean).map((item) => String(item).trim()))];
-    if ((role === 'admin' || role === 'super_admin') && !normalized.includes('admin-panel')) {
-        normalized.push('admin-panel');
-    }
-    if ((role === 'admin' || role === 'super_admin') && !normalized.includes('financeiro')) {
-        normalized.push('financeiro');
-    }
-    return normalized;
+    return accessPolicy.normalizeFolderAccess(folderAccess, role);
 }
 
 function normalizeRole(role, email = '') {
-    const normalizedRole = String(role || '').trim();
-    if (normalizedRole === 'super_admin') return 'super_admin';
-    if (normalizedRole === 'admin' || normalizedRole === 'adm') return 'admin';
-    if (ADMIN_EMAIL_FALLBACKS.includes(String(email || '').trim().toLowerCase())) {
-        return 'admin';
-    }
-    return 'user';
+    return accessPolicy.normalizeRoleName(role);
 }
 
 async function ensureOwnProfile(auth) {
@@ -271,7 +245,7 @@ async function handlePatch(req, res, env) {
     sendJson(res, 200, { data });
 }
 
-module.exports = async function accountHandler(req, res, env = process.env) {
+async function accountHandler(req, res, env = process.env) {
     if (req.method === 'GET') {
         await handleGet(req, res, env);
         return;
@@ -283,4 +257,11 @@ module.exports = async function accountHandler(req, res, env = process.env) {
     }
 
     sendJson(res, 405, { error: 'Método não suportado.' });
-};
+}
+
+module.exports = accountHandler;
+module.exports.sendJson = sendJson;
+module.exports.parseBody = parseBody;
+module.exports.getClients = getClients;
+module.exports.authenticateUser = authenticateUser;
+module.exports.ensureOwnProfile = ensureOwnProfile;

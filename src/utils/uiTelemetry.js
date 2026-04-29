@@ -14,6 +14,8 @@ export function reportUiError(scope, error, meta = {}) {
         meta,
         timestamp: new Date().toISOString()
     };
+    if (error?.originalMessage) payload.originalMessage = error.originalMessage;
+    if (error?.diagnostics) payload.diagnostics = error.diagnostics;
     if (error?.stack) payload.stack = error.stack;
     console.error('[ui-error]', payload);
 }

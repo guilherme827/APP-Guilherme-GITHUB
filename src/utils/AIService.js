@@ -1,3 +1,5 @@
+import { authService } from './AuthService.js';
+
 export class AIService {
     static async fileToPayload(file) {
         return new Promise((resolve, reject) => {
@@ -23,10 +25,12 @@ export class AIService {
 
         try {
             const payload = await this.fileToPayload(file);
+            const accessToken = await authService.getAccessToken().catch(() => '');
             const response = await fetch('/api/ai-analyze', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
                 },
                 body: JSON.stringify(payload)
             });

@@ -17,6 +17,22 @@ test('normalizeAgendaTask should sanitize invalid values', () => {
     assert.equal(task.status, 'open');
 });
 
+test('normalizeAgendaTask should preserve supported metadata fields', () => {
+    const task = normalizeAgendaTask({
+        text: 'Protocolar resposta',
+        meta: {
+            source: 'ai-chat',
+            processNumbers: ['12345.123/2024'],
+            clientLabel: 'Mineradora Exemplo',
+            promptExcerpt: 'Pedido de protocolo',
+            createdFromMessageId: 'msg-1'
+        }
+    }, 0);
+    assert.equal(task.meta.source, 'ai-chat');
+    assert.deepEqual(task.meta.processNumbers, ['12345.123/2024']);
+    assert.equal(task.meta.clientLabel, 'Mineradora Exemplo');
+});
+
 test('normalizeListItem should ignore empty text', () => {
     assert.equal(normalizeListItem({ text: '   ' }, 0), null);
 });

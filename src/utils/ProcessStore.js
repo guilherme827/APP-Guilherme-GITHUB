@@ -1,4 +1,3 @@
-import { supabase } from '../lib/supabaseClient.js';
 import {
     buildProjectId,
     buildProjectsFromProcesses,
@@ -6,7 +5,6 @@ import {
     mapProcessRowToModel
 } from './supabaseMappers.js';
 import { getActiveOrganizationId } from '../app/organizationContext.js';
-import { trashStore } from './TrashStore.js';
 import { activityLogger } from './ActivityLogger.js';
 import { clientStore } from './ClientStore.js';
 import { authService } from './AuthService.js';
@@ -40,32 +38,28 @@ async function fetchProcessesApi(options = {}) {
 export class ProcessStore {
     constructor() {
         this.processes = [];
+        this.projects = [];
         this.ready = Promise.resolve();
         this.isLoaded = false;
+        this.snapshotKey = '[]';
+    }
+
+    computeSnapshotKey(processes = this.processes) {
+        return JSON.stringify(processes || []);
     }
 
     async hydrate() {
-        const organizationId = getCurrentOrganizationId();
-
-        // Busca IDs de processos que já estão na lixeira para excluí-los da lista normal
-        const { data: trashedData } = await supabase
-            .from('trash')
-            .select('item_id')
-            .eq('organization_id', organizationId)
-            .eq('item_type', 'processo');
-
-        const trashedIds = new Set((trashedData || []).map(r => String(r.item_id)));
-
+        const previousSnapshotKey = this.snapshotKey;
         const data = await fetchProcessesApi({ method: 'GET' });
 
-        // Filtra os que estão na lixeira e converte pro modelo frontend
-        this.processes = (data || [])
-            .filter(row => !trashedIds.has(String(row.id)))
-            .map(mapProcessRowToModel);
+        this.processes = (data || []).map(mapProcessRowToModel);
             
         this.sanitizeDeadlines();
         this.sanitizeExtractEvents();
+        this.rebuildProjects();
         this.isLoaded = true;
+        this.snapshotKey = this.computeSnapshotKey();
+        return { changed: this.snapshotKey !== previousSnapshotKey };
     }
 
     async load(force = false) {
@@ -76,8 +70,36 @@ export class ProcessStore {
 
     reset() {
         this.processes = [];
+        this.projects = [];
         this.isLoaded = false;
         this.ready = Promise.resolve();
+        this.snapshotKey = '[]';
+    }
+
+    rebuildProjects() {
+        this.projects = buildProjectsFromProcesses(this.processes || []);
+        return this.projects;
+    }
+
+    resolveProject(processLike = {}) {
+        const clientId = Number(processLike?.clientId);
+        const projectName = String(processLike?.projectName || '').trim();
+        const explicitProjectId = String(processLike?.projectId || '').trim();
+
+        if (!clientId || (!projectName && !explicitProjectId)) {
+            return null;
+        }
+
+        if (projectName) {
+            return {
+                id: buildProjectId(clientId, projectName),
+                clientId,
+                name: projectName
+            };
+        }
+
+        this.rebuildProjects();
+        return this.projects.find((project) => String(project.id) === explicitProjectId) || null;
     }
 
     sanitizeDeadlines() {
@@ -327,6 +349,8 @@ export class ProcessStore {
 
         const created = mapProcessRowToModel(data);
         this.processes = [...this.processes, created];
+        this.rebuildProjects();
+        this.snapshotKey = this.computeSnapshotKey();
 
         // Registro de Atividade
         const client = clientStore.clients.find(c => String(c.id) === String(created.clientId));
@@ -389,6 +413,8 @@ export class ProcessStore {
 
         const updated = mapProcessRowToModel(data);
         this.processes = this.processes.map((process) => (String(process.id) === String(id) ? updated : process));
+        this.rebuildProjects();
+        this.snapshotKey = this.computeSnapshotKey();
 
         // Registro de Atividade
         const client = clientStore.clients.find(c => String(c.id) === String(updated.clientId));
@@ -461,6 +487,8 @@ export class ProcessStore {
 
         const changed = this.processes.some((p) => String(p.id) === String(id));
         this.processes = this.processes.filter((p) => String(p.id) !== String(id));
+        this.rebuildProjects();
+        this.snapshotKey = this.computeSnapshotKey();
 
         return changed;
     }

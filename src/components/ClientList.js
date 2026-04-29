@@ -1,5 +1,6 @@
 import { clientStore } from '../utils/ClientStore.js';
 import { processStore } from '../utils/ProcessStore.js';
+import { openAiChat } from '../utils/AIChatNavigation.js';
 import { showConfirmModal } from './ConfirmModal.js';
 import { showNoticeModal } from './NoticeModal.js';
 import { escapeHtml } from '../utils/sanitize.js';
@@ -7,6 +8,7 @@ import { escapeHtml } from '../utils/sanitize.js';
 export function renderClientList(container, actionsContainer, onEdit, onAdd, options = {}) {
     const canEdit = options.canEdit !== false;
     const canDelete = options.canDelete === true;
+    const notifyFeedback = typeof options.onFeedback === 'function' ? options.onFeedback : null;
 
     const state = {
         query: '',
@@ -152,11 +154,44 @@ export function renderClientList(container, actionsContainer, onEdit, onAdd, opt
                         await clientStore.deleteClient(Number(selectedClient.id));
                         state.selectedId = null;
                         render();
+                        notifyFeedback?.('Titular excluido com sucesso.');
                     } catch (error) {
                         showNoticeModal('Nao foi possivel excluir', error?.message || 'Falha ao remover o titular.');
                     }
                 }
             );
+        });
+
+        container.querySelector('[data-detail-action="ai-secretaria"]')?.addEventListener('click', () => {
+            if (!selectedClient) return;
+            openAiChat({
+                agentSlug: 'secretaria',
+                feature: 'client_context_chat',
+                prompt: `Redija uma comunicacao profissional para o titular ${getClientName(selectedClient)} com base no cadastro atual.`,
+                context: [
+                    `Titular selecionado: ${getClientName(selectedClient)}.`,
+                    `Documento: ${getClientDocument(selectedClient) || 'nao informado'}.`,
+                    `Email: ${selectedClient.email || 'nao informado'}. Telefone: ${selectedClient.telefone || 'nao informado'}.`,
+                    `Endereco: ${formatAddress(selectedClient)}.`,
+                    `Quantidade de processos vinculados: ${processStore.processes.filter((process) => String(process.clientId) === String(selectedClient.id)).length}.`
+                ]
+            });
+        });
+
+        container.querySelector('[data-detail-action="ai-estagiario"]')?.addEventListener('click', () => {
+            if (!selectedClient) return;
+            openAiChat({
+                agentSlug: 'estagiario',
+                feature: 'client_context_chat',
+                prompt: `Analise o titular ${getClientName(selectedClient)} e me diga os proximos passos recomendados dentro do App Control.`,
+                context: [
+                    `Titular selecionado: ${getClientName(selectedClient)}.`,
+                    `Documento: ${getClientDocument(selectedClient) || 'nao informado'}.`,
+                    `Email: ${selectedClient.email || 'nao informado'}. Telefone: ${selectedClient.telefone || 'nao informado'}.`,
+                    `Endereco: ${formatAddress(selectedClient)}.`,
+                    `Quantidade de processos vinculados: ${processStore.processes.filter((process) => String(process.clientId) === String(selectedClient.id)).length}.`
+                ]
+            });
         });
 
         container.querySelectorAll('.btn-copy-inline').forEach(btn => {
@@ -188,7 +223,10 @@ export function renderClientList(container, actionsContainer, onEdit, onAdd, opt
             });
             btn.addEventListener('click', () => {
                 const docName = btn.dataset.downloadVal;
-                // Since this is a UI prototype, we just trigger the notice modal.
+                if (notifyFeedback) {
+                    notifyFeedback(`Download iniciado para ${docName}.`, 'info');
+                    return;
+                }
                 import('./NoticeModal.js').then(({ showNoticeModal }) => {
                     showNoticeModal('Download Iniciado', `Simulando o download do arquivo: ${docName}`);
                 });
@@ -243,6 +281,8 @@ function renderClientDetail(client, options = {}) {
                         </div>
                     </div>
                     <div class="client-detail-actions">
+                        <button type="button" class="btn-pill" data-detail-action="ai-estagiario">IA Estagiário</button>
+                        <button type="button" class="btn-pill" data-detail-action="ai-secretaria">IA Secretaria</button>
                         ${options.canEdit !== false ? `<button type="button" class="btn-pill" data-detail-action="edit">Editar</button>` : ''}
                         <button type="button" class="btn-pill ${options.canDelete ? 'client-detail-danger' : ''}" data-detail-action="deactivate">
                             Excluir

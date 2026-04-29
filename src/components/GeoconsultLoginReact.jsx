@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Eye, EyeOff, ShieldCheck } from 'lucide-react';
-
-const earthTexture = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
+import earthTexture from '../assets/login-globe-texture.svg';
 
 export default function GeoconsultLoginReact() {
     const [viewState, setViewState] = useState('login');

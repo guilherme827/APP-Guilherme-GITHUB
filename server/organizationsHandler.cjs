@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const accessPolicy = require('../shared/accessPolicy.cjs');
 
 function sendJson(res, statusCode, payload) {
     res.statusCode = statusCode;
@@ -52,34 +53,17 @@ function slugify(value) {
         .slice(0, 80);
 }
 
-const ORGANIZATION_MODULE_IDS = ['painel', 'clientes', 'processos', 'prazos', 'financeiro', 'configuracoes'];
-
 function normalizeOrganizationModules(input) {
-    if (!Array.isArray(input)) {
-        return [...ORGANIZATION_MODULE_IDS];
-    }
-    const normalized = [...new Set(input.filter(Boolean).map((item) => String(item).trim()))]
-        .filter((item) => ORGANIZATION_MODULE_IDS.includes(item));
-    return normalized.length > 0 ? normalized : [...ORGANIZATION_MODULE_IDS];
+    return accessPolicy.normalizeOrganizationModules(input);
 }
 
-function normalizeUserPermissions(input, role) {
-    if (role === 'admin') {
-        return { view: true, edit: true, delete: true };
-    }
-    return {
-        view: input?.view !== false,
-        edit: input?.edit === true,
-        delete: input?.delete === true
-    };
-}
-
-function sanitizeManagedUserPayload(body = {}, allowedModules = ORGANIZATION_MODULE_IDS) {
-    const role = String(body.role || 'user').trim() === 'admin' ? 'admin' : 'user';
-    const folderAccess = Array.isArray(body.folder_access)
-        ? [...new Set(body.folder_access.filter(Boolean).map((item) => String(item).trim()))]
-            .filter((item) => allowedModules.includes(item))
-        : [];
+function sanitizeManagedUserPayload(body = {}, allowedModules = accessPolicy.ORGANIZATION_MODULE_IDS) {
+    const access = accessPolicy.normalizeManagedUserAccess({
+        role: body.role,
+        permissions: body.permissions,
+        folder_access: body.folder_access,
+        allowedModules
+    });
 
     return {
         id: String(body.id || '').trim(),
@@ -89,9 +73,9 @@ function sanitizeManagedUserPayload(body = {}, allowedModules = ORGANIZATION_MOD
         cpf: String(body.cpf || '').trim(),
         password: String(body.password || ''),
         gender: ['masculino', 'feminino', 'neutro'].includes(String(body.gender || 'neutro')) ? String(body.gender || 'neutro') : 'neutro',
-        role,
-        permissions: normalizeUserPermissions(body.permissions, role),
-        folder_access: role === 'admin' ? [...allowedModules] : folderAccess
+        role: access.role,
+        permissions: access.permissions,
+        folder_access: access.folder_access
     };
 }
 
@@ -110,7 +94,7 @@ async function getOrganizationById(serviceClient, organizationId) {
             .eq('id', organizationId)
             .single();
         return {
-            data: fallbackResult.data ? { ...fallbackResult.data, enabled_modules: [...ORGANIZATION_MODULE_IDS] } : null,
+            data: fallbackResult.data ? { ...fallbackResult.data, enabled_modules: [...accessPolicy.ORGANIZATION_MODULE_IDS] } : null,
             error: fallbackResult.error
         };
     }
@@ -206,7 +190,7 @@ async function handleGet(req, res, env) {
     const scope = String(requestUrl.searchParams.get('scope') || '').trim();
 
     if (scope === 'current') {
-        if (auth.profile.role === 'super_admin') {
+        if (accessPolicy.isSuperAdminRole(auth.profile.role)) {
             sendJson(res, 200, { data: null });
             return;
         }
@@ -236,7 +220,7 @@ async function handleGet(req, res, env) {
             sendJson(res, 200, {
                 data: {
                     ...fallbackOrganizationResult.data,
-                    enabled_modules: [...ORGANIZATION_MODULE_IDS]
+                    enabled_modules: [...accessPolicy.ORGANIZATION_MODULE_IDS]
                 }
             });
             return;
@@ -256,7 +240,7 @@ async function handleGet(req, res, env) {
         return;
     }
 
-    if (auth.profile.role !== 'super_admin') {
+    if (!accessPolicy.isSuperAdminRole(auth.profile.role)) {
         sendJson(res, 403, { error: 'Apenas o super admin pode gerenciar organizações.' });
         return;
     }
@@ -325,7 +309,7 @@ async function handleGet(req, res, env) {
                 };
             })
             .sort((left, right) => {
-                const roleWeight = (profile) => (profile?.role === 'admin' ? 0 : 1);
+                const roleWeight = (profile) => (accessPolicy.isAdminRole(profile?.role) ? 0 : 1);
                 const weightDelta = roleWeight(left) - roleWeight(right);
                 if (weightDelta !== 0) return weightDelta;
                 return String(left?.full_name || left?.email || '').localeCompare(String(right?.full_name || right?.email || ''), 'pt-BR');
@@ -341,7 +325,7 @@ async function handlePost(req, res, env) {
         sendJson(res, auth.error.status, { error: auth.error.message });
         return;
     }
-    if (auth.profile.role !== 'super_admin') {
+    if (!accessPolicy.isSuperAdminRole(auth.profile.role)) {
         sendJson(res, 403, { error: 'Apenas o super admin pode gerenciar organizações.' });
         return;
     }
@@ -492,7 +476,7 @@ async function handleUserPost(req, res, env) {
         sendJson(res, auth.error.status, { error: auth.error.message });
         return;
     }
-    if (auth.profile.role !== 'super_admin') {
+    if (!accessPolicy.isSuperAdminRole(auth.profile.role)) {
         sendJson(res, 403, { error: 'Apenas o super admin pode gerenciar usuários das organizações.' });
         return;
     }
@@ -568,7 +552,7 @@ async function handleUserPatch(req, res, env) {
         sendJson(res, auth.error.status, { error: auth.error.message });
         return;
     }
-    if (auth.profile.role !== 'super_admin') {
+    if (!accessPolicy.isSuperAdminRole(auth.profile.role)) {
         sendJson(res, 403, { error: 'Apenas o super admin pode gerenciar usuários das organizações.' });
         return;
     }
@@ -684,7 +668,7 @@ async function handlePatch(req, res, env) {
         sendJson(res, auth.error.status, { error: auth.error.message });
         return;
     }
-    if (auth.profile.role !== 'super_admin') {
+    if (!accessPolicy.isSuperAdminRole(auth.profile.role)) {
         sendJson(res, 403, { error: 'Apenas o super admin pode gerenciar organizações.' });
         return;
     }
