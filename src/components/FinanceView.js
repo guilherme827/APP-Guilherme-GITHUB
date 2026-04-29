@@ -124,6 +124,9 @@ export function renderFinanceiroView(container, storageKey) {
         applyPersistedState(state, normalized.state);
         state.syncStatus = mapSyncStatusToUi(normalized.syncStatus);
         state.syncUpdatedAt = normalized.updatedAt || state.updatedAt || null;
+        if (resolvedStorageKey) {
+            saveUserScopedJsonStorage(resolvedStorageKey, buildPersistedFinanceState(state));
+        }
         emitSyncState();
         render();
         return true;

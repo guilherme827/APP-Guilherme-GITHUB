@@ -607,20 +607,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function refreshFinanceStateInBackground() {
+        const financeViewController = getFinanceViewController();
         const localStorageKey = getUserScopedStorageKey(FINANCE_STORAGE_KEY, state.currentSession?.user?.id);
-        const cachedState = loadUserScopedJsonStorage(localStorageKey, null);
-        const cachedUpdatedAt = cachedState?.updatedAt || null;
+        const cachedState = financeViewController
+            ? null
+            : loadUserScopedJsonStorage(localStorageKey, null);
+        const knownUpdatedAt = financeViewController?.getUpdatedAt?.() || cachedState?.updatedAt || null;
         const result = await loadFinancePreference(state.currentSession?.user?.id || null, currentOrganizationId);
         const nextUpdatedAt = result?.updatedAt || result?.state?.updatedAt || null;
-        const hasChanged = Boolean(nextUpdatedAt) && nextUpdatedAt !== cachedUpdatedAt;
+        const hasChanged = Boolean(nextUpdatedAt) && nextUpdatedAt !== knownUpdatedAt;
         if (!hasChanged) return false;
         if (state.currentSection === 'financeiro' && canAutoRefreshCurrentSection('financeiro')) {
-            const financeViewController = getFinanceViewController();
             if (financeViewController?.canApplyExternalSync?.() !== false) {
                 const applied = financeViewController?.applyRemoteState?.(result);
                 if (applied) {
                     return true;
                 }
+                return false;
             }
         }
         invalidateSectionView('financeiro');
