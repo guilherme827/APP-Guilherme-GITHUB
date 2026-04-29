@@ -599,6 +599,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         return true;
     }
 
+    function getFinanceViewController() {
+        const mainContent = document.getElementById('main-content');
+        if (!mainContent || state.currentSection !== 'financeiro') return null;
+        const controller = mainContent.__financeViewController;
+        return controller && typeof controller.applyRemoteState === 'function' ? controller : null;
+    }
+
     async function refreshFinanceStateInBackground() {
         const localStorageKey = getUserScopedStorageKey(FINANCE_STORAGE_KEY, state.currentSession?.user?.id);
         const cachedState = loadUserScopedJsonStorage(localStorageKey, null);
@@ -607,6 +614,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         const nextUpdatedAt = result?.updatedAt || result?.state?.updatedAt || null;
         const hasChanged = Boolean(nextUpdatedAt) && nextUpdatedAt !== cachedUpdatedAt;
         if (!hasChanged) return false;
+        if (state.currentSection === 'financeiro' && canAutoRefreshCurrentSection('financeiro')) {
+            const financeViewController = getFinanceViewController();
+            if (financeViewController?.canApplyExternalSync?.() !== false) {
+                const applied = financeViewController?.applyRemoteState?.(result);
+                if (applied) {
+                    return true;
+                }
+            }
+        }
         invalidateSectionView('financeiro');
         if (state.currentSection === 'financeiro' && canAutoRefreshCurrentSection('financeiro')) {
             refreshCurrentSection('financeiro');

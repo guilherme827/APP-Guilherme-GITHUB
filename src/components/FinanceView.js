@@ -113,6 +113,22 @@ export function renderFinanceiroView(container, storageKey) {
     let lastNotifiedSyncUpdatedAt = null;
     let feedbackTimeoutId = null;
 
+    const canApplyExternalSync = () => !state.isAdding && !state.actionModal && !state.fichaModal;
+
+    const applyRemoteStateInPlace = (result, { isManualRefresh = false } = {}) => {
+        const normalized = normalizeFinanceSyncResult(result, buildPersistedFinanceState(state));
+        const nextUpdatedAt = normalized.updatedAt || normalized.state?.updatedAt || null;
+        if (!isManualRefresh && nextUpdatedAt && nextUpdatedAt === (state.updatedAt || null)) {
+            return false;
+        }
+        applyPersistedState(state, normalized.state);
+        state.syncStatus = mapSyncStatusToUi(normalized.syncStatus);
+        state.syncUpdatedAt = normalized.updatedAt || state.updatedAt || null;
+        emitSyncState();
+        render();
+        return true;
+    };
+
     const showInlineFeedback = (message, tone = 'success') => {
         state.feedbackMessage = String(message || '').trim();
         state.feedbackTone = tone;
@@ -557,11 +573,7 @@ export function renderFinanceiroView(container, storageKey) {
             render();
             try {
                 const result = await reloadPreference();
-                const normalized = normalizeFinanceSyncResult(result, buildPersistedFinanceState(state));
-                applyPersistedState(state, normalized.state);
-                state.syncStatus = mapSyncStatusToUi(normalized.syncStatus);
-                state.syncUpdatedAt = normalized.updatedAt || state.updatedAt || null;
-                emitSyncState();
+                applyRemoteStateInPlace(result, { isManualRefresh: true });
             } catch {
                 state.syncStatus = 'offline';
                 emitSyncState();
@@ -1142,6 +1154,15 @@ export function renderFinanceiroView(container, storageKey) {
 
         emitSyncState();
         hasRenderedOnce = true;
+    };
+
+    container.__financeViewController = {
+        canApplyExternalSync,
+        getUpdatedAt: () => state.updatedAt || null,
+        applyRemoteState: (result) => {
+            if (!canApplyExternalSync()) return false;
+            return applyRemoteStateInPlace(result);
+        }
     };
 
     render();
