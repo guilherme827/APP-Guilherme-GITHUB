@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Eye, EyeOff, ShieldCheck } from 'lucide-react';
-import earthTexture from '../assets/login-globe-texture.svg';
+import earthTexture from '../assets/earth-blue-marble.jpg';
 
 export default function GeoconsultLoginReact() {
     const [viewState, setViewState] = useState('login');
@@ -55,18 +55,30 @@ export default function GeoconsultLoginReact() {
                     <div className="flex flex-col items-center gap-3">
                         <div className="flex items-center justify-center">
                             <span className="text-4xl font-black tracking-tight text-white sm:text-5xl">GEOC</span>
-                            <div className="relative mx-1 h-10 w-10 overflow-hidden rounded-full border border-blue-400/20 bg-[#00102a] sm:h-12 sm:w-12">
+                            <div
+                                className="relative mx-1 h-10 w-10 overflow-hidden rounded-full border border-blue-400/20 bg-[#00102a] sm:h-12 sm:w-12"
+                                style={{ transform: 'rotate(-23.5deg)', transformOrigin: 'center' }}
+                            >
                                 <div
-                                    className="flex h-full w-[200%]"
+                                    className="flex h-full w-[400%]"
                                     style={{ animation: 'geoconsult-earth-spin 20s linear infinite' }}
                                 >
-                                    <img src={earthTexture} alt="" className="h-full w-1/2 object-cover" />
-                                    <img src={earthTexture} alt="" className="h-full w-1/2 object-cover" />
+                                    <img src={earthTexture} alt="" className="h-full w-1/2 object-fill" />
+                                    <img src={earthTexture} alt="" className="h-full w-1/2 object-fill" />
                                 </div>
+                                <div
+                                    className="pointer-events-none absolute inset-0.5 rounded-full"
+                                    style={{
+                                        background:
+                                            'radial-gradient(circle at 25% 22%, rgba(255,255,255,0.46), transparent 21%), radial-gradient(circle at 38% 30%, rgba(172,224,255,0.22), transparent 38%), radial-gradient(circle at 70% 70%, rgba(73,190,255,0.14), transparent 42%)'
+                                    }}
+                                />
                                 <div
                                     className="pointer-events-none absolute inset-0 rounded-full"
                                     style={{
-                                        boxShadow: 'inset -4px -4px 8px rgba(0,0,0,0.6), inset 2px 2px 6px rgba(255,255,255,0.3)'
+                                        background:
+                                            'radial-gradient(circle at 35% 28%, rgba(255,255,255,0.08), transparent 30%), radial-gradient(circle at 78% 56%, rgba(2,6,23,0.74), transparent 56%), radial-gradient(circle at 50% 50%, transparent 56%, rgba(1,8,24,0.58) 100%)',
+                                        boxShadow: 'inset -6px -5px 10px rgba(0,0,0,0.62), inset 2px 2px 5px rgba(255,255,255,0.24)'
                                     }}
                                 />
                             </div>

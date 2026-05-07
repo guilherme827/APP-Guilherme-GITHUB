@@ -21,6 +21,16 @@ function buildDomainState(state = {}) {
     };
 }
 
+function getFinanceBaseUpdatedAt(state = {}) {
+    return state.baseUpdatedAt || state.remoteUpdatedAt || state.syncUpdatedAt || state.updatedAt || null;
+}
+
+function isFinanceConflictError(error) {
+    return error?.code === 'FINANCE_STATE_CONFLICT'
+        || error?.status === 409
+        || error?.statusCode === 409;
+}
+
 function buildUiState(state = {}) {
     return {
         activeTab: ['caixa', 'fichas', 'agendamentos'].includes(String(state.activeTab || ''))
@@ -48,6 +58,24 @@ function mergeFinanceState(domainState = {}, uiState = {}) {
     };
 }
 
+let financeSaveQueue = Promise.resolve();
+let financeSaveScopeKey = '';
+let lastKnownRemoteUpdatedAt = null;
+
+function ensureFinanceSaveScope(localStorageKey = '') {
+    const safeKey = String(localStorageKey || '');
+    if (safeKey === financeSaveScopeKey) return;
+    financeSaveScopeKey = safeKey;
+    financeSaveQueue = Promise.resolve();
+    lastKnownRemoteUpdatedAt = null;
+}
+
+function enqueueFinanceSave(task) {
+    const queued = financeSaveQueue.catch(() => {}).then(task);
+    financeSaveQueue = queued.catch(() => {});
+    return queued;
+}
+
 async function fetchFinanceApi(options = {}) {
     try {
         const accessToken = await authService.getAccessToken();
@@ -62,7 +90,12 @@ async function fetchFinanceApi(options = {}) {
 
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(payload?.error || 'Falha na API do financeiro.');
+            const error = new Error(payload?.error || 'Falha na API do financeiro.');
+            error.status = response.status;
+            error.statusCode = response.status;
+            error.code = payload?.code || '';
+            error.currentUpdatedAt = payload?.currentUpdatedAt || null;
+            throw error;
         }
 
         return payload?.data || { state: null, updatedAt: null };
@@ -78,6 +111,7 @@ async function fetchFinanceApi(options = {}) {
 
 export const financeStore = {
     async getStateResult({ localStorageKey = '', fallbackValue = null } = {}) {
+        ensureFinanceSaveScope(localStorageKey);
         const cachedState = localStorageKey
             ? loadUserScopedJsonStorage(localStorageKey, fallbackValue)
             : fallbackValue;
@@ -89,6 +123,7 @@ export const financeStore = {
             if (localStorageKey) {
                 saveUserScopedJsonStorage(localStorageKey, merged);
             }
+            lastKnownRemoteUpdatedAt = remote?.updatedAt || merged.updatedAt || null;
             return {
                 state: merged,
                 syncStatus: 'remote',
@@ -105,35 +140,61 @@ export const financeStore = {
     },
 
     async saveStateResult({ state, localStorageKey = '' } = {}) {
-        const uiState = buildUiState(state || {});
-        const domainState = buildDomainState(state || {});
+        ensureFinanceSaveScope(localStorageKey);
+        return enqueueFinanceSave(async () => {
+            const uiState = buildUiState(state || {});
+            const domainState = buildDomainState(state || {});
+            const baseUpdatedAt = lastKnownRemoteUpdatedAt || getFinanceBaseUpdatedAt(state || {});
 
-        try {
-            const remote = await fetchFinanceApi({
-                method: 'PUT',
-                body: JSON.stringify({ state: domainState })
-            });
-            const merged = mergeFinanceState(remote?.state || domainState, uiState);
-            if (localStorageKey) {
-                saveUserScopedJsonStorage(localStorageKey, merged);
+            try {
+                const remote = await fetchFinanceApi({
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        state: domainState,
+                        baseUpdatedAt
+                    })
+                });
+                const merged = mergeFinanceState(remote?.state || domainState, uiState);
+                if (localStorageKey) {
+                    saveUserScopedJsonStorage(localStorageKey, merged);
+                }
+                lastKnownRemoteUpdatedAt = remote?.updatedAt || merged.updatedAt || null;
+                return {
+                    state: merged,
+                    syncStatus: 'remote',
+                    updatedAt: remote?.updatedAt || merged.updatedAt || null
+                };
+            } catch (error) {
+                const merged = mergeFinanceState(domainState, uiState);
+                if (isFinanceConflictError(error)) {
+                    lastKnownRemoteUpdatedAt = error.currentUpdatedAt || lastKnownRemoteUpdatedAt;
+                    if (localStorageKey) {
+                        saveUserScopedJsonStorage(`${localStorageKey}:conflict-backup`, {
+                            ...merged,
+                            conflictDetectedAt: new Date().toISOString(),
+                            remoteUpdatedAt: error.currentUpdatedAt || null,
+                            baseUpdatedAt
+                        });
+                    }
+                    reportUiError('financeStore.saveState.conflict', error, { endpoint: '/api/finance' });
+                    return {
+                        state: merged,
+                        syncStatus: 'conflict',
+                        updatedAt: error.currentUpdatedAt || null,
+                        errorMessage: error.message || 'O financeiro foi atualizado em outra sessão.'
+                    };
+                }
+                if (localStorageKey) {
+                    saveUserScopedJsonStorage(localStorageKey, merged);
+                }
+                reportUiError('financeStore.saveState', error, { endpoint: '/api/finance' });
+                reportUiEvent('finance.local-cache-fallback', { endpoint: '/api/finance' });
+                return {
+                    state: merged,
+                    syncStatus: 'local-fallback',
+                    updatedAt: merged.updatedAt || null
+                };
             }
-            return {
-                state: merged,
-                syncStatus: 'remote',
-                updatedAt: remote?.updatedAt || merged.updatedAt || null
-            };
-        } catch (error) {
-            const merged = mergeFinanceState(domainState, uiState);
-            if (localStorageKey) {
-                saveUserScopedJsonStorage(localStorageKey, merged);
-            }
-            reportUiError('financeStore.saveState', error, { endpoint: '/api/finance' });
-            reportUiEvent('finance.local-cache-fallback', { endpoint: '/api/finance' });
-            return {
-                state: merged,
-                syncStatus: 'local-fallback',
-                updatedAt: merged.updatedAt || null
-            };
-        }
+        });
     }
 };

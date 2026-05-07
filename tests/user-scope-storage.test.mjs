@@ -5,7 +5,8 @@ import { loadUserScopeStorageFunctions } from './helpers/loadUserScopeStorageFun
 const {
     getUserScopedStorageKey,
     loadUserScopedJsonStorage,
-    saveUserScopedJsonStorage
+    saveUserScopedJsonStorage,
+    clearUserScopedJsonStorage
 } = await loadUserScopeStorageFunctions();
 
 const DASHBOARD_WIDGETS_STORAGE_KEY = 'app-control-dashboard-widgets-v1';
@@ -19,6 +20,9 @@ function createLocalStorageMock() {
         },
         setItem(key, value) {
             map.set(key, String(value));
+        },
+        removeItem(key) {
+            map.delete(key);
         }
     };
 }
@@ -64,4 +68,18 @@ test('loadUserScopedJsonStorage should return fallback for missing or invalid JS
 
     localStorage.setItem('broken', '{not-json');
     assert.deepEqual(loadUserScopedJsonStorage('broken', fallback), fallback);
+});
+
+test('clearUserScopedJsonStorage should remove user cache and conflict backups', () => {
+    globalThis.localStorage = createLocalStorageMock();
+
+    saveUserScopedJsonStorage('app-control-finance-v1:user-a', { ok: true });
+    saveUserScopedJsonStorage('app-control-finance-v1:user-a:conflict-backup', { draft: true });
+    saveUserScopedJsonStorage('app-control-finance-v1:user-b', { ok: true });
+
+    clearUserScopedJsonStorage(['app-control-finance-v1'], 'user-a');
+
+    assert.equal(localStorage.getItem('app-control-finance-v1:user-a'), null);
+    assert.equal(localStorage.getItem('app-control-finance-v1:user-a:conflict-backup'), null);
+    assert.notEqual(localStorage.getItem('app-control-finance-v1:user-b'), null);
 });

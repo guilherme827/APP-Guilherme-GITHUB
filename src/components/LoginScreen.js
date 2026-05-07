@@ -1,5 +1,5 @@
 import { loginSupportService } from '../utils/LoginSupportService.js';
-import loginGlobeTexture from '../assets/login-globe-texture.svg';
+import loginGlobeTexture from '../assets/earth-blue-marble.jpg';
 
 const LOGIN_SCREEN_STYLE_ID = 'geoconsult-login-screen-styles';
 const MIN_LOADING_MS = 250;
@@ -241,6 +241,7 @@ export function renderLoginScreen(container, onLogin) {
                                     <img src="${loginGlobeTexture}" alt="" />
                                     <img src="${loginGlobeTexture}" alt="" />
                                 </span>
+                                <span class="geo-login-globe-shine"></span>
                                 <span class="geo-login-globe-shade"></span>
                             </span>
                             <span class="geo-login-wordmark-text">NSULT</span>
@@ -424,13 +425,15 @@ function ensureLoginScreenStyles() {
             border-radius: 9999px;
             border: 1px solid rgba(96, 165, 250, 0.2);
             background: #00102a;
-            box-shadow: 0 12px 40px rgba(2, 6, 23, 0.45);
+            box-shadow: 0 12px 40px rgba(2, 6, 23, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.12);
             flex: 0 0 auto;
+            transform: rotate(-23.5deg);
+            transform-origin: center;
         }
 
         .geo-login-globe-track {
             display: flex;
-            width: 200%;
+            width: 400%;
             height: 100%;
             animation: geoEarthSpin 20s linear infinite;
         }
@@ -438,8 +441,19 @@ function ensureLoginScreenStyles() {
         .geo-login-globe-track img {
             width: 50%;
             height: 100%;
-            object-fit: cover;
+            object-fit: fill;
             flex: 0 0 50%;
+        }
+
+        .geo-login-globe-shine {
+            position: absolute;
+            inset: 2px;
+            border-radius: 9999px;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 25% 22%, rgba(255, 255, 255, 0.46), transparent 21%),
+                radial-gradient(circle at 38% 30%, rgba(172, 224, 255, 0.22), transparent 38%),
+                radial-gradient(circle at 70% 70%, rgba(73, 190, 255, 0.14), transparent 42%);
         }
 
         .geo-login-globe-shade {
@@ -447,7 +461,11 @@ function ensureLoginScreenStyles() {
             inset: 0;
             border-radius: 9999px;
             pointer-events: none;
-            box-shadow: inset -4px -4px 8px rgba(0, 0, 0, 0.6), inset 2px 2px 6px rgba(255, 255, 255, 0.3);
+            background:
+                radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.08), transparent 30%),
+                radial-gradient(circle at 78% 56%, rgba(2, 6, 23, 0.74), transparent 56%),
+                radial-gradient(circle at 50% 50%, transparent 56%, rgba(1, 8, 24, 0.58) 100%);
+            box-shadow: inset -6px -5px 10px rgba(0, 0, 0, 0.62), inset 2px 2px 5px rgba(255, 255, 255, 0.24);
         }
 
         .geo-login-tagline-pill {

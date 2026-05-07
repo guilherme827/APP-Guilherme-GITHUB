@@ -20,23 +20,6 @@ async function getCurrentOrganization(serviceClient, profile) {
         .eq('id', profile.organization_id)
         .single();
 
-    if (error && /enabled_modules/i.test(String(error.message || ''))) {
-        const fallbackResult = await serviceClient
-            .from('organizations')
-            .select('id, name, slug, is_active, created_by, created_at, updated_at')
-            .eq('id', profile.organization_id)
-            .single();
-
-        if (fallbackResult.error || !fallbackResult.data) {
-            throw new Error(fallbackResult.error?.message || 'Não foi possível carregar a organização atual.');
-        }
-
-        return {
-            ...fallbackResult.data,
-            enabled_modules: [...accessPolicy.ORGANIZATION_MODULE_IDS]
-        };
-    }
-
     if (error) {
         throw new Error(error.message || 'Não foi possível carregar a organização atual.');
     }

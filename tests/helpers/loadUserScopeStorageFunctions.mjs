@@ -9,7 +9,9 @@ export async function loadUserScopeStorageFunctions() {
         return {
             getUserScopedStorageKey,
             loadUserScopedJsonStorage,
-            saveUserScopedJsonStorage
+            saveUserScopedJsonStorage,
+            removeUserScopedJsonStorage,
+            clearUserScopedJsonStorage
         };`
     );
     return factory();

@@ -333,7 +333,10 @@ test('bootstrap handler should aggregate profile, organization and preferences i
 test('finance handler should return the remote finance state for the authenticated user', async () => {
     const financeRows = {
         finance_cashboxes: [{ id: 'cash-1', organization_id: 'org-1', title: 'Geoconsult', created_at: '2026-04-28T10:00:00Z', updated_at: '2026-04-28T15:00:00Z' }],
-        finance_cashbox_transactions: [{ id: 'txn-1', organization_id: 'org-1', cashbox_id: 'cash-1', occurred_on: '2026-04-28', description: 'Entrada teste', entry_type: 'entrada', credit_amount: 1200, debit_amount: 0, transfer_group_id: null, transfer_direction: null, counterpart_cashbox_id: null, ficha_title: '', sort_index: 0, updated_at: '2026-04-28T15:00:00Z' }],
+        finance_cashbox_transactions: [
+            { id: 'txn-1', organization_id: 'org-1', cashbox_id: 'cash-1', occurred_on: '2026-04-28', description: 'Entrada teste', entry_type: 'entrada', credit_amount: 1200, debit_amount: 0, transfer_group_id: null, transfer_direction: null, counterpart_cashbox_id: null, ficha_title: '', sort_index: 0, updated_at: '2026-04-28T15:00:00Z' },
+            { id: 'ficha-payment-pay-1', organization_id: 'org-1', cashbox_id: 'cash-1', occurred_on: '2026-04-28', description: 'Pagamento duplicado legado', entry_type: 'entrada', credit_amount: 800, debit_amount: 0, transfer_group_id: null, transfer_direction: null, counterpart_cashbox_id: null, ficha_title: 'Ficha Alpha', sort_index: 1, updated_at: '2026-04-28T15:00:00Z' }
+        ],
         finance_fichas: [],
         finance_contracts: [],
         finance_contract_entries: [],
@@ -388,6 +391,7 @@ test('finance handler should return the remote finance state for the authenticat
     assert.equal(res.statusCode, 200);
     const payload = JSON.parse(String(res.body || '{}'));
     assert.deepEqual(payload.data.state.itemsByTab.caixa.map((item) => item.id), ['cash-1']);
+    assert.deepEqual(payload.data.state.itemsByTab.caixa[0].transactions.map((item) => item.id), ['txn-1']);
     assert.equal(payload.data.state.itemsByTab.caixa[0].transactions[0].description, 'Entrada teste');
     assert.equal(payload.data.updatedAt, '2026-04-28T15:00:00Z');
 });
@@ -464,8 +468,27 @@ test('finance handler should persist scoped finance state via PUT', async () => 
         body: {
             state: {
                 itemsByTab: {
-                    caixa: [{ id: 'cash-2', title: 'Caixa novo', transactions: [] }],
-                    fichas: [],
+                    caixa: [{
+                        id: 'cash-2',
+                        title: 'Caixa novo',
+                        transactions: [
+                            { id: 'manual-1', isoDate: '2026-04-28', description: 'Entrada manual', type: 'entrada', credit: 'R$ 100,00', debit: '' },
+                            { id: 'ficha-payment-pay-1', isoDate: '2026-04-28', description: 'Pagamento contrato', type: 'entrada', credit: 'R$ 200,00', debit: '', fichaTitle: 'Ficha Alpha' }
+                        ]
+                    }],
+                    fichas: [{
+                        id: 'ficha-1',
+                        title: 'Ficha Alpha',
+                        contracts: [{
+                            id: 'contract-1',
+                            description: 'Contrato Alpha',
+                            cashboxId: 'cash-2',
+                            createdAt: '2026-04-01',
+                            payments: [{ id: 'pay-1', date: '2026-04-28', description: 'Pagamento contrato', value: 200 }],
+                            debits: [],
+                            schedules: []
+                        }]
+                    }],
                     agendamentos: []
                 }
             }
@@ -480,4 +503,92 @@ test('finance handler should persist scoped finance state via PUT', async () => 
     assert.equal(rowsByTable.finance_cashboxes[0].organization_id, 'org-1');
     assert.equal(rowsByTable.finance_cashboxes[0].id, 'cash-2');
     assert.equal(rowsByTable.finance_cashboxes[0].title, 'Caixa novo');
+    assert.deepEqual(rowsByTable.finance_cashbox_transactions.map((row) => row.id), ['manual-1']);
+    assert.equal(rowsByTable.finance_cashbox_transactions[0].credit_amount, 100);
+    assert.deepEqual(rowsByTable.finance_fichas.map((row) => row.id), ['ficha-1']);
+    assert.deepEqual(rowsByTable.finance_contracts.map((row) => row.id), ['contract-1']);
+    assert.deepEqual(rowsByTable.finance_contract_entries.map((row) => row.id), ['pay-1']);
+    assert.equal(rowsByTable.finance_contract_entries[0].entry_type, 'payment');
+});
+
+test('finance handler should reject stale finance PUT requests', async () => {
+    const rowsByTable = {
+        finance_cashboxes: [{ id: 'cash-1', organization_id: 'org-1', title: 'Caixa atual', created_at: '2026-04-28T10:00:00Z', updated_at: '2026-04-28T15:00:00Z' }],
+        finance_cashbox_transactions: [],
+        finance_fichas: [],
+        finance_contracts: [],
+        finance_contract_entries: [],
+        finance_agendamentos: []
+    };
+    let destructiveWrites = 0;
+    const createClientMock = createSupabaseClientMock({
+        getUser: (token) => ({
+            data: {
+                user: token === 'valid-token'
+                    ? { id: 'user-1', email: 'user@example.com', user_metadata: {} }
+                    : null
+            },
+            error: null
+        }),
+        resolveQuery: ({ table, mode, action, filters }) => {
+            const idFilter = filters.find((item) => item.field === 'id')?.value;
+            const organizationFilter = filters.find((item) => item.field === 'organization_id')?.value;
+
+            if (table === 'profiles' && action === 'select' && mode === 'maybeSingle' && idFilter === 'user-1') {
+                return {
+                    data: {
+                        id: 'user-1',
+                        email: 'user@example.com',
+                        full_name: 'User Example',
+                        gender: 'neutro',
+                        role: 'user',
+                        organization_id: 'org-1',
+                        permissions: { view: true, edit: false, delete: false },
+                        folder_access: ['painel', 'financeiro']
+                    },
+                    error: null
+                };
+            }
+
+            if (table === 'profiles' && action === 'select' && mode === 'limit') {
+                return { data: [], error: null };
+            }
+
+            if (organizationFilter === 'org-1' && Object.prototype.hasOwnProperty.call(rowsByTable, table)) {
+                if (action === 'select' && mode === 'then') {
+                    return { data: rowsByTable[table], error: null };
+                }
+                if (action === 'delete' || action === 'insert') {
+                    destructiveWrites += 1;
+                    return { data: [], error: null };
+                }
+            }
+
+            return { data: null, error: null };
+        }
+    });
+    const handler = loadServerHandlerWithSupabaseMock('server/financeHandler.cjs', createClientMock);
+    const req = createMockReq({
+        method: 'PUT',
+        headers: { authorization: 'Bearer valid-token' },
+        body: {
+            baseUpdatedAt: '2026-04-28T14:00:00Z',
+            state: {
+                itemsByTab: {
+                    caixa: [{ id: 'cash-2', title: 'Caixa antigo', transactions: [] }],
+                    fichas: [],
+                    agendamentos: []
+                }
+            }
+        }
+    });
+    const res = createMockRes();
+
+    await handler(req, res, env);
+
+    assert.equal(res.statusCode, 409);
+    const payload = JSON.parse(String(res.body || '{}'));
+    assert.equal(payload.code, 'FINANCE_STATE_CONFLICT');
+    assert.equal(payload.currentUpdatedAt, '2026-04-28T15:00:00Z');
+    assert.equal(destructiveWrites, 0);
 });

@@ -17,6 +17,7 @@ import { showNoticeModal } from './components/NoticeModal.js';
 import { createAppRuntimeState } from './app/appRuntimeState.js';
 import { resetActiveOrganizationId, setActiveOrganizationId } from './app/organizationContext.js';
 import {
+    clearUserScopedJsonStorage,
     getUserScopedStorageKey,
     loadUserScopedJsonStorage
 } from './dashboard/userScopedStorage.js';
@@ -27,7 +28,8 @@ import {
     getPreferredVisibleSection,
     hasAdminAccess,
     hasOfficeAdminAccess,
-    hasSuperAdminAccess
+    hasSuperAdminAccess,
+    ORGANIZATION_MODULE_IDS
 } from './utils/accessControl.js';
 import {
     reportUiError,
@@ -43,11 +45,13 @@ const FINANCE_STORAGE_KEY = 'app-control-finance-v1';
 const LOGIN_ROUTE = '/';
 const APP_ROUTE = '/app';
 const AUTH_DEBUG = false;
+const E2E_RUNTIME_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_E2E_RUNTIME === 'true';
 const AUTO_SYNC_INTERVAL_MS = 15000;
 const AUTO_SYNC_FOCUS_DEBOUNCE_MS = 1200;
 const componentModuleCache = new Map();
 
 function getE2EOverrides() {
+    if (!E2E_RUNTIME_ENABLED) return null;
     if (typeof window === 'undefined') return null;
     const overrides = window.__APP_CONTROL_E2E__;
     if (overrides && typeof overrides === 'object') return overrides;
@@ -374,11 +378,30 @@ async function saveFinancePreference(userId, organizationId, payload) {
     });
 }
 
+function clearUserRuntimeCache(userId) {
+    clearUserScopedJsonStorage([
+        DASHBOARD_WIDGETS_STORAGE_KEY,
+        FINANCE_STORAGE_KEY,
+        'app-control-ai-chat-v1'
+    ], userId);
+    localStorage.removeItem('app-control-e2e-runtime');
+}
+
 function renderViewLoading(container, message = 'Carregando modulo...') {
     if (!container) return;
     container.innerHTML = `
-        <div class="glass-card" style="padding: 1.25rem 1.5rem;">
+        <div class="glass-card" data-view-loading="true" style="padding: 1.25rem 1.5rem;">
             <p class="label-tech">${message}</p>
+        </div>
+    `;
+}
+
+function renderViewError(container, message = 'Não foi possível carregar esta área.') {
+    if (!container) return;
+    container.innerHTML = `
+        <div class="glass-card" style="padding: 1.25rem 1.5rem;">
+            <p class="label-tech">Erro ao carregar</p>
+            <p style="margin-top:0.45rem; color:var(--slate-700);">${message}</p>
         </div>
     `;
 }
@@ -487,7 +510,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
             try {
                 const bootstrapData = await profileService.getBootstrap();
-                state.currentProfile = bootstrapData?.profile || buildEmergencyProfile(state.currentSession);
+                if (!bootstrapData?.profile) {
+                    throw new Error('Perfil autenticado não retornado pelo servidor.');
+                }
+                state.currentProfile = bootstrapData.profile;
                 state.currentOrganization = bootstrapData?.organization || null;
                 state.currentOrganizationLoaded = true;
                 state.dashboardSummary = bootstrapData?.dashboardSummary || null;
@@ -504,13 +530,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                     state.preferencesLoaded = true;
                 }
             } catch (error) {
-                authLog('renderRoute:bootstrap-fallback', error?.message || error);
-                try {
-                    state.currentProfile = await profileService.getProfile(state.currentSession.user.id);
-                } catch (profileError) {
-                    authLog('renderRoute:profile-fallback', profileError?.message || profileError);
-                    state.currentProfile = buildEmergencyProfile(state.currentSession);
-                }
+                authLog('renderRoute:bootstrap-failed', error?.message || error);
+                reportUiError('bootstrap.profile', error, { userId: state.currentSession?.user?.id || null });
+                app.innerHTML = `
+                    <main id="main-content" style="padding: 3rem 2rem;">
+                        <div class="glass-card" style="padding: 1.25rem 1.5rem;">
+                            <p class="label-tech">Erro ao carregar perfil</p>
+                            <p style="margin-top:0.45rem; color:var(--slate-700);">Não foi possível validar seu perfil e sua organização. Atualize a página ou entre novamente.</p>
+                        </div>
+                    </main>
+                `;
+                return;
             }
         }
 
@@ -520,16 +550,40 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (hasSuperAdminAccess(state.currentProfile)) {
             state.currentOrganization = null;
             state.currentOrganizationLoaded = true;
-        } else if (!currentOrganizationId) {
-            state.currentOrganization = null;
+        } else if (!currentOrganizationId && e2eOverrides) {
+            state.currentOrganization = e2eOverrides.organization || {
+                id: 'e2e-organization',
+                name: 'Organização E2E',
+                slug: 'e2e',
+                enabled_modules: [...ORGANIZATION_MODULE_IDS]
+            };
             state.currentOrganizationLoaded = true;
+        } else if (!currentOrganizationId) {
+            app.innerHTML = `
+                <main id="main-content" style="padding: 3rem 2rem;">
+                    <div class="glass-card" style="padding: 1.25rem 1.5rem;">
+                        <p class="label-tech">Organização não vinculada</p>
+                        <p style="margin-top:0.45rem; color:var(--slate-700);">Seu perfil precisa estar vinculado a uma organização ativa para acessar o app.</p>
+                    </div>
+                </main>
+            `;
+            return;
         } else if (currentOrganizationId && (!state.currentOrganizationLoaded || String(state.currentOrganization?.id || '') !== String(currentOrganizationId))) {
             try {
                 state.currentOrganization = await profileService.getCurrentOrganization();
                 setActiveOrganizationId(currentOrganizationId, state.currentOrganization?.slug);
             } catch (error) {
-                authLog('renderRoute:organization-fallback', error?.message || error);
-                state.currentOrganization = null;
+                authLog('renderRoute:organization-failed', error?.message || error);
+                reportUiError('bootstrap.organization', error, { organizationId: currentOrganizationId });
+                app.innerHTML = `
+                    <main id="main-content" style="padding: 3rem 2rem;">
+                        <div class="glass-card" style="padding: 1.25rem 1.5rem;">
+                            <p class="label-tech">Erro ao carregar organização</p>
+                            <p style="margin-top:0.45rem; color:var(--slate-700);">Não foi possível validar a organização vinculada ao seu perfil.</p>
+                        </div>
+                    </main>
+                `;
+                return;
             }
             state.currentOrganizationLoaded = true;
         }
@@ -563,6 +617,60 @@ document.addEventListener('DOMContentLoaded', async () => {
     const viewCache = new Map();
     const coreDataRefreshSections = new Set(['painel', 'clientes', 'processos', 'prazos']);
 
+    function getNodePathWithinRoot(root, node) {
+        if (!root || !node) return null;
+        const path = [];
+        let current = node;
+        while (current && current !== root) {
+            const parent = current.parentElement;
+            if (!parent) return null;
+            path.unshift(Array.prototype.indexOf.call(parent.children, current));
+            current = parent;
+        }
+        return current === root ? path : null;
+    }
+
+    function resolveNodePathWithinRoot(root, path) {
+        if (!root || !Array.isArray(path)) return null;
+        let current = root;
+        for (const index of path) {
+            current = current?.children?.[index] || null;
+            if (!current) return null;
+        }
+        return current;
+    }
+
+    function captureScrollSnapshot(root) {
+        if (!root) return [];
+        return [root, ...root.querySelectorAll('*')]
+            .filter((element) => element instanceof HTMLElement)
+            .map((element) => ({
+                element,
+                path: element === root ? [] : getNodePathWithinRoot(root, element),
+                top: element.scrollTop,
+                left: element.scrollLeft,
+                canScroll: (element.scrollHeight - element.clientHeight > 4) || (element.scrollWidth - element.clientWidth > 4)
+            }))
+            .filter((entry) => entry.path !== null && entry.canScroll && (entry.top !== 0 || entry.left !== 0))
+            .map(({ path, top, left }) => ({ path, top, left }));
+    }
+
+    function restoreScrollSnapshot(root, snapshot) {
+        if (!root || !Array.isArray(snapshot) || snapshot.length === 0) return;
+        const applySnapshot = () => {
+            snapshot.forEach(({ path, top, left }) => {
+                const target = path.length === 0 ? root : resolveNodePathWithinRoot(root, path);
+                if (!(target instanceof HTMLElement)) return;
+                target.scrollTop = top;
+                target.scrollLeft = left;
+            });
+        };
+        window.requestAnimationFrame(() => {
+            applySnapshot();
+            window.requestAnimationFrame(applySnapshot);
+        });
+    }
+
     function invalidateSectionView(sectionId) {
         const cachedView = viewCache.get(sectionId);
         if (cachedView) {
@@ -577,11 +685,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     function refreshCurrentSection(sectionId = state.currentSection) {
         if (!state.currentSession || state.currentSection !== sectionId) return;
         invalidateSectionView(sectionId);
-        window.setTimeout(() => {
-            renderRoute().catch((error) => {
-                reportUiError('navigation.refresh-current-section', error, { sectionId });
-            });
-        }, 0);
+        void navigate(sectionId, {
+            forceRender: true,
+            skipLoading: true,
+            preserveScroll: true
+        }).catch((error) => {
+            reportUiError('navigation.refresh-current-section', error, { sectionId });
+        });
     }
 
     function canAutoRefreshCurrentSection(sectionId = state.currentSection) {
@@ -928,7 +1038,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         let navigationSequence = 0;
 
-        const navigate = async (id) => {
+        const navigate = async (id, options = {}) => {
+            const {
+                forceRender = false,
+                skipLoading = false,
+                preserveScroll = false
+            } = options;
             const navigationId = ++navigationSequence;
             authLog('navigate:requested', { id, currentSection: state.currentSection });
 
@@ -943,7 +1058,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             state.currentSection = id;
-            document.body.classList.toggle('workspace-lock-scroll', id === 'clientes' || id === 'processos');
+            document.body.classList.toggle('workspace-lock-scroll', id === 'clientes' || id === 'processos' || id === 'financeiro');
+            document.body.classList.toggle('financeiro-active', id === 'financeiro');
             document.querySelectorAll('.dock-item').forEach((item) => {
                 item.classList.toggle('active', item.dataset.id === id);
             });
@@ -983,8 +1099,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentView.container.style.display = 'flex';
 
             const { viewHeader, viewActionsLeft, viewActions, contentArea, initialized } = currentView;
+            const canReuseMarkup = contentArea.childElementCount > 0;
+            const scrollSnapshot = preserveScroll ? captureScrollSnapshot(contentArea) : [];
 
-            if (initialized) {
+            const hasStaleLoadingState = initialized && !!contentArea.querySelector('[data-view-loading="true"]');
+            if (hasStaleLoadingState) {
+                currentView.initialized = false;
+            }
+
+            if (currentView.initialized && !forceRender) {
                 if (id === 'organizacoes') {
                     viewHeader.style.display = 'flex';
                     viewHeader.style.justifyContent = 'flex-end';
@@ -993,7 +1116,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     viewHeader.style.display = 'flex';
                     viewHeader.style.justifyContent = 'space-between';
                     viewHeader.classList.add('view-header-floating-left');
-                } else if (['ia-chat', 'clientes', 'processos', 'prazos', 'financeiro', 'equipe', 'configuracoes', 'admin-panel'].includes(id)) {
+                } else if (id === 'financeiro') {
+                    viewHeader.style.display = 'none';
+                    viewHeader.classList.remove('view-header-floating-left');
+                } else if (['ia-chat', 'clientes', 'processos', 'prazos', 'equipe', 'configuracoes', 'admin-panel'].includes(id)) {
                     viewHeader.style.display = 'flex';
                     viewHeader.style.justifyContent = 'flex-end';
                     viewHeader.classList.remove('view-header-floating-left');
@@ -1018,13 +1144,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return; // Pula o render se já carregou antes
             }
 
-            currentView.initialized = true;
-
+            try {
             if (id === 'organizacoes') {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
-                renderViewLoading(contentArea, 'Carregando organizações...');
+                if (!(skipLoading && canReuseMarkup)) {
+                    renderViewLoading(contentArea, 'Carregando organizações...');
+                }
                 try {
                     await ensureOrganizationsLoaded();
                 } catch (error) {
@@ -1097,7 +1224,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'space-between';
                 if (viewHeader) viewHeader.classList.add('view-header-floating-left');
-                renderViewLoading(contentArea, 'Carregando painel...');
+                if (!(skipLoading && canReuseMarkup)) {
+                    renderViewLoading(contentArea, 'Carregando painel...');
+                }
                 const { renderDashboard } = await loadDashboardViewModule();
                 if (navigationId !== navigationSequence || state.currentSection !== id) return;
                 renderDashboard(
@@ -1115,7 +1244,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
-                renderViewLoading(contentArea, 'Carregando chat global...');
+                if (!(skipLoading && canReuseMarkup)) {
+                    renderViewLoading(contentArea, 'Carregando chat global...');
+                }
                 const { renderAIChatView } = await loadAIChatViewModule();
                 if (navigationId !== navigationSequence || state.currentSection !== id) return;
                 renderAIChatView(contentArea, {
@@ -1128,7 +1259,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
-                renderViewLoading(contentArea, 'Carregando titulares...');
+                if (!(skipLoading && canReuseMarkup)) {
+                    renderViewLoading(contentArea, 'Carregando titulares...');
+                }
                 if (!state.coreDataLoaded) {
                     try {
                         await ensureCoreDataLoaded();
@@ -1142,7 +1275,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
-                renderViewLoading(contentArea, 'Carregando processos...');
+                if (!(skipLoading && canReuseMarkup)) {
+                    renderViewLoading(contentArea, 'Carregando processos...');
+                }
                 if (!state.coreDataLoaded) {
                     try {
                         await ensureCoreDataLoaded();
@@ -1156,7 +1291,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
-                renderViewLoading(contentArea, 'Carregando painel de prazos...');
+                if (!(skipLoading && canReuseMarkup)) {
+                    renderViewLoading(contentArea, 'Carregando painel de prazos...');
+                }
                 if (!state.coreDataLoaded) {
                     try {
                         await ensureCoreDataLoaded();
@@ -1175,7 +1312,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (viewHeader) viewHeader.style.display = 'flex';
                 if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
-                renderViewLoading(contentArea, 'Carregando configuracoes...');
+                if (!(skipLoading && canReuseMarkup)) {
+                    renderViewLoading(contentArea, 'Carregando configuracoes...');
+                }
                 
                 const { renderSettingsMenuView } = await loadSettingsMenuViewModule();
                 if (navigationId !== navigationSequence || state.currentSection !== id) return;
@@ -1288,7 +1427,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return;
                 }
 
-                renderViewLoading(contentArea, 'Carregando painel administrativo...');
+                if (!(skipLoading && canReuseMarkup)) {
+                    renderViewLoading(contentArea, 'Carregando painel administrativo...');
+                }
                 const { renderAdminPanelView } = await loadAdminPanelViewModule();
                 if (navigationId !== navigationSequence || state.currentSection !== id) return;
 
@@ -1335,10 +1476,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 });
             } else if (id === 'financeiro') {
-                if (viewHeader) viewHeader.style.display = 'flex';
-                if (viewHeader) viewHeader.style.justifyContent = 'flex-end';
+                if (viewHeader) viewHeader.style.display = 'none';
                 if (viewHeader) viewHeader.classList.remove('view-header-floating-left');
-                renderViewLoading(contentArea, 'Carregando financeiro...');
+                if (!(skipLoading && canReuseMarkup)) {
+                    renderViewLoading(contentArea, 'Carregando financeiro...');
+                }
                 const { renderFinanceiroView } = await loadFinanceViewModule();
                 if (navigationId !== navigationSequence || state.currentSection !== id) return;
                 renderFinanceiroView(
@@ -1348,10 +1490,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                         initialState: await loadFinancePreference(state.currentSession?.user?.id || null, currentOrganizationId),
                         onPersist: (payload) => saveFinancePreference(state.currentSession?.user?.id || null, currentOrganizationId, payload),
                         onReload: () => loadFinancePreference(state.currentSession?.user?.id || null, currentOrganizationId),
-                        onSyncStateChange: ({ shouldBlockUnload = false } = {}) => {
+                        onSyncStateChange: ({ shouldBlockUnload = false, status = '' } = {}) => {
                             financeUnloadGuard = {
                                 shouldBlockUnload: !!shouldBlockUnload,
-                                message: 'O financeiro ainda está sincronizando. Aguarde a confirmação antes de fechar a página.'
+                                message: status === 'conflict'
+                                    ? 'O financeiro tem alterações locais bloqueadas por uma versão mais recente no servidor.'
+                                    : 'O financeiro ainda está sincronizando. Aguarde a confirmação antes de fechar a página.'
                             };
                         }
                     }
@@ -1374,7 +1518,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                     return;
                 }
-                renderViewLoading(contentArea, 'Carregando equipe...');
+                if (!(skipLoading && canReuseMarkup)) {
+                    renderViewLoading(contentArea, 'Carregando equipe...');
+                }
                 try {
                     await ensureTeamProfilesLoaded();
                 } catch (error) {
@@ -1425,6 +1571,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             } else {
                 renderEmptyState(contentArea, id);
+            }
+                if (navigationId === navigationSequence && state.currentSection === id) {
+                    currentView.initialized = true;
+                    restoreScrollSnapshot(contentArea, scrollSnapshot);
+                }
+            } catch (error) {
+                currentView.initialized = false;
+                reportUiError('navigation.view-render', error, { section: id });
+                if (navigationId === navigationSequence && state.currentSection === id) {
+                    renderViewError(contentArea, error?.message || 'Não foi possível carregar esta área.');
+                    showNoticeModal('Erro ao carregar', error?.message || 'Não foi possível abrir esta área.');
+                }
             }
         };
 
@@ -1599,9 +1757,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     const handleAuthStateChange = async (event, session) => {
+        const previousUserId = state.currentSession?.user?.id || null;
         authLog('onAuthStateChange', {
             event,
-            currentUserId: state.currentSession?.user?.id || null,
+            currentUserId: previousUserId,
             nextUserId: session?.user?.id || null,
             isBootstrappingSession: state.isBootstrappingSession
         });
@@ -1626,6 +1785,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         state.currentSession = session;
         if (!session) {
             stopAutomaticSync();
+            clearUserRuntimeCache(previousUserId);
             state.currentProfile = null;
             teamProfiles = [];
             state.teamProfilesLoaded = false;

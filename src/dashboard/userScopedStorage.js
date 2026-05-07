@@ -21,3 +21,19 @@ export function saveUserScopedJsonStorage(storageKey, value) {
     return value;
 }
 
+export function removeUserScopedJsonStorage(storageKey) {
+    if (!storageKey) return;
+    localStorage.removeItem(storageKey);
+}
+
+export function clearUserScopedJsonStorage(baseKeys = [], userId = '') {
+    const safeUserId = String(userId || '').trim();
+    const keys = (Array.isArray(baseKeys) ? baseKeys : [baseKeys])
+        .map((baseKey) => getUserScopedStorageKey(baseKey, safeUserId))
+        .filter(Boolean);
+
+    keys.forEach((key) => {
+        localStorage.removeItem(key);
+        localStorage.removeItem(`${key}:conflict-backup`);
+    });
+}

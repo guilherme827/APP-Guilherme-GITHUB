@@ -80,24 +80,11 @@ function sanitizeManagedUserPayload(body = {}, allowedModules = accessPolicy.ORG
 }
 
 async function getOrganizationById(serviceClient, organizationId) {
-    const baseSelect = 'id, name, slug, is_active, created_by, created_at, updated_at';
     const orgResult = await serviceClient
         .from('organizations')
-        .select(`enabled_modules, ${baseSelect}`)
+        .select('*')
         .eq('id', organizationId)
         .single();
-
-    if (orgResult.error && /enabled_modules/i.test(String(orgResult.error.message || ''))) {
-        const fallbackResult = await serviceClient
-            .from('organizations')
-            .select(baseSelect)
-            .eq('id', organizationId)
-            .single();
-        return {
-            data: fallbackResult.data ? { ...fallbackResult.data, enabled_modules: [...accessPolicy.ORGANIZATION_MODULE_IDS] } : null,
-            error: fallbackResult.error
-        };
-    }
 
     return {
         data: orgResult.data ? { ...orgResult.data, enabled_modules: normalizeOrganizationModules(orgResult.data.enabled_modules) } : null,
@@ -128,28 +115,12 @@ async function buildAuthUserMetadataMap(serviceClient) {
     }
 }
 
-async function upsertProfileWithOptionalCpf(serviceClient, payload) {
-    let profilePayload = { ...payload };
-    let result = await serviceClient
+async function upsertProfile(serviceClient, payload) {
+    return serviceClient
         .from('profiles')
-        .upsert(profilePayload)
+        .upsert(payload)
         .select('*')
         .single();
-
-    if (result.error && /cpf/i.test(String(result.error.message || ''))) {
-        delete profilePayload.cpf;
-        result = await serviceClient
-            .from('profiles')
-            .upsert(profilePayload)
-            .select('*')
-            .single();
-
-        if (result.data) {
-            result.data = { ...result.data, cpf: '' };
-        }
-    }
-
-    return result;
 }
 
 async function authenticateRequester(req, env) {
@@ -205,27 +176,6 @@ async function handleGet(req, res, env) {
             .eq('id', auth.profile.organization_id)
             .single();
 
-        if (organizationError && /enabled_modules/i.test(String(organizationError.message || ''))) {
-            const fallbackOrganizationResult = await auth.serviceClient
-                .from('organizations')
-                .select('id, name, slug, is_active, created_by, created_at, updated_at')
-                .eq('id', auth.profile.organization_id)
-                .single();
-
-            if (fallbackOrganizationResult.error || !fallbackOrganizationResult.data) {
-                sendJson(res, 500, { error: fallbackOrganizationResult.error?.message || 'Não foi possível carregar a organização atual.' });
-                return;
-            }
-
-            sendJson(res, 200, {
-                data: {
-                    ...fallbackOrganizationResult.data,
-                    enabled_modules: [...accessPolicy.ORGANIZATION_MODULE_IDS]
-                }
-            });
-            return;
-        }
-
         if (organizationError || !organization) {
             sendJson(res, 500, { error: organizationError?.message || 'Não foi possível carregar a organização atual.' });
             return;
@@ -245,49 +195,24 @@ async function handleGet(req, res, env) {
         return;
     }
 
-    let organizations = null;
-    let organizationsError = null;
     const organizationsResult = await auth.serviceClient
         .from('organizations')
         .select('*')
         .order('name', { ascending: true });
-    organizations = organizationsResult.data;
-    organizationsError = organizationsResult.error;
-
-    if (organizationsError && /enabled_modules/i.test(String(organizationsError.message || ''))) {
-        const fallbackOrganizationsResult = await auth.serviceClient
-            .from('organizations')
-            .select('id, name, slug, is_active, created_by, created_at, updated_at')
-            .order('name', { ascending: true });
-        organizations = fallbackOrganizationsResult.data;
-        organizationsError = fallbackOrganizationsResult.error;
-    }
+    const organizations = organizationsResult.data;
+    const organizationsError = organizationsResult.error;
 
     if (organizationsError) {
         sendJson(res, 500, { error: organizationsError.message || 'Não foi possível carregar as organizações.' });
         return;
     }
 
-    let organizationProfiles = null;
-    let organizationProfilesError = null;
     const organizationProfilesResult = await auth.serviceClient
         .from('profiles')
         .select('id, email, full_name, cpf, organization_id, role, created_at')
         .in('role', ['admin', 'user']);
-    organizationProfiles = organizationProfilesResult.data;
-    organizationProfilesError = organizationProfilesResult.error;
-
-    if (organizationProfilesError && /cpf/i.test(String(organizationProfilesError.message || ''))) {
-        const fallbackOrganizationProfilesResult = await auth.serviceClient
-            .from('profiles')
-            .select('id, email, full_name, organization_id, role, created_at')
-            .in('role', ['admin', 'user']);
-        organizationProfiles = (fallbackOrganizationProfilesResult.data || []).map((profile) => ({
-            ...profile,
-            cpf: ''
-        }));
-        organizationProfilesError = fallbackOrganizationProfilesResult.error;
-    }
+    const organizationProfiles = organizationProfilesResult.data;
+    const organizationProfilesError = organizationProfilesResult.error;
 
     if (organizationProfilesError) {
         sendJson(res, 500, { error: organizationProfilesError.message || 'Não foi possível carregar os usuários da organização.' });
@@ -361,34 +286,13 @@ async function handlePost(req, res, env) {
         enabled_modules: enabledModules
     };
 
-    let organization = null;
-    let organizationError = null;
     const organizationResult = await auth.serviceClient
         .from('organizations')
         .insert(organizationInsertPayload)
         .select('*')
         .single();
-    organization = organizationResult.data;
-    organizationError = organizationResult.error;
-
-    if (organizationError && /enabled_modules/i.test(String(organizationError.message || ''))) {
-        const fallbackOrganizationResult = await auth.serviceClient
-            .from('organizations')
-            .insert({
-                name: organizationName,
-                slug: organizationSlug,
-                created_by: auth.profile.id
-            })
-            .select('id, name, slug, is_active, created_by, created_at, updated_at')
-            .single();
-        organization = fallbackOrganizationResult.data
-            ? {
-                ...fallbackOrganizationResult.data,
-                enabled_modules: enabledModules
-            }
-            : null;
-        organizationError = fallbackOrganizationResult.error;
-    }
+    const organization = organizationResult.data;
+    const organizationError = organizationResult.error;
 
     if (organizationError || !organization) {
         sendJson(res, 500, { error: organizationError?.message || 'Não foi possível criar a organização.' });
@@ -414,7 +318,7 @@ async function handlePost(req, res, env) {
         return;
     }
 
-    let adminProfilePayload = {
+    const adminProfilePayload = {
         id: createdUserData.user.id,
         email: adminEmail,
         full_name: adminFullName,
@@ -426,35 +330,13 @@ async function handlePost(req, res, env) {
         folder_access: enabledModules
     };
 
-    let adminProfile = null;
-    let adminProfileError = null;
     const adminProfileResult = await auth.serviceClient
         .from('profiles')
         .upsert(adminProfilePayload)
         .select('*')
         .single();
-    adminProfile = adminProfileResult.data;
-    adminProfileError = adminProfileResult.error;
-
-    if (adminProfileError && /cpf/i.test(String(adminProfileError.message || ''))) {
-        adminProfilePayload = {
-            ...adminProfilePayload,
-            cpf: undefined
-        };
-        delete adminProfilePayload.cpf;
-        const fallbackAdminProfileResult = await auth.serviceClient
-            .from('profiles')
-            .upsert(adminProfilePayload)
-            .select('*')
-            .single();
-        adminProfile = fallbackAdminProfileResult.data
-            ? {
-                ...fallbackAdminProfileResult.data,
-                cpf: ''
-            }
-            : null;
-        adminProfileError = fallbackAdminProfileResult.error;
-    }
+    const adminProfile = adminProfileResult.data;
+    const adminProfileError = adminProfileResult.error;
 
     if (adminProfileError) {
         sendJson(res, 500, { error: adminProfileError.message || 'Administrador criado no Auth, mas o perfil não foi salvo.' });
@@ -526,7 +408,7 @@ async function handleUserPost(req, res, env) {
         return;
     }
 
-    const { data: profile, error: profileError } = await upsertProfileWithOptionalCpf(auth.serviceClient, {
+    const { data: profile, error: profileError } = await upsertProfile(auth.serviceClient, {
         id: createdUserData.user.id,
         email: payload.email,
         full_name: payload.full_name,
@@ -621,7 +503,7 @@ async function handleUserPatch(req, res, env) {
         return;
     }
 
-    let updatePayload = {
+    const updatePayload = {
         email: payload.email,
         full_name: payload.full_name,
         cpf: payload.cpf,
@@ -632,27 +514,13 @@ async function handleUserPatch(req, res, env) {
         folder_access: payload.folder_access
     };
 
-    let updateResult = await auth.serviceClient
+    const updateResult = await auth.serviceClient
         .from('profiles')
         .update(updatePayload)
         .eq('id', userId)
         .eq('organization_id', organizationId)
         .select('*')
         .single();
-
-    if (updateResult.error && /cpf/i.test(String(updateResult.error.message || ''))) {
-        delete updatePayload.cpf;
-        updateResult = await auth.serviceClient
-            .from('profiles')
-            .update(updatePayload)
-            .eq('id', userId)
-            .eq('organization_id', organizationId)
-            .select('*')
-            .single();
-        if (updateResult.data) {
-            updateResult.data = { ...updateResult.data, cpf: '' };
-        }
-    }
 
     if (updateResult.error || !updateResult.data) {
         sendJson(res, 500, { error: updateResult.error?.message || 'Não foi possível atualizar o perfil do usuário.' });
@@ -689,17 +557,12 @@ async function handlePatch(req, res, env) {
 
     const enabledModules = normalizeOrganizationModules(body.enabled_modules);
     
-    let updateResult = await auth.serviceClient
+    const updateResult = await auth.serviceClient
         .from('organizations')
         .update({ enabled_modules: enabledModules })
         .eq('id', organizationId)
         .select('*')
         .single();
-        
-    if (updateResult.error && /enabled_modules/i.test(String(updateResult.error.message || ''))) {
-        sendJson(res, 200, { data: { id: organizationId, is_fallback: true } });
-        return;
-    }
 
     if (updateResult.error || !updateResult.data) {
         sendJson(res, 500, { error: updateResult.error?.message || 'Não foi possível atualizar a organização.' });

@@ -12,22 +12,7 @@ const FINANCE_TABS = [
     { id: 'agendamentos', label: 'Agendamentos', title: 'Agendamentos financeiros', copy: 'Visualize compromissos, cobrancas e operacoes programadas.' }
 ];
 
-const GEOCONSULT_LEGACY_DATE_FIXES = [
-    { type: 'entrada', amount: 57413.75, descriptions: ['saldo anterior'], isoDate: '2026-01-01' },
-    { type: 'debito', amount: 50, descriptions: ['plano de integralizacao do capital - sicredi'], isoDate: '2026-01-02' },
-    { type: 'debito', amount: 5000, descriptions: ['aluguel'], isoDate: '2026-01-05' },
-    { type: 'debito', amount: 4500, descriptions: ['salario do matheus', 'salario matheus'], isoDate: '2026-01-05' },
-    { type: 'debito', amount: 3036, descriptions: ['salario gladis'], isoDate: '2026-01-05' },
-    { type: 'debito', amount: 2750, descriptions: ['salario emanuel'], isoDate: '2026-01-05' },
-    { type: 'debito', amount: 194.95, descriptions: ['taxa licenciamento'], isoDate: '2026-01-05' },
-    { type: 'debito', amount: 63.8, descriptions: ['cesta de relacionamento sicredi'], isoDate: '2026-01-05' },
-    { type: 'debito', amount: 306, descriptions: ['pagamento da internet'], isoDate: '2026-01-05' },
-    { type: 'debito', amount: 7020, descriptions: ['salario elizabeth'], isoDate: '2026-01-05' },
-    { type: 'debito', amount: 255.84, descriptions: ['combustivel onix'], isoDate: '2026-01-19' },
-    { type: 'debito', amount: 4851.31, descriptions: ['simples nacional'], isoDate: '2026-01-20' },
-    { type: 'debito', amount: 1669.51, descriptions: ['simples nacional'], isoDate: '2026-01-20' },
-    { type: 'entrada', amount: 12400, descriptions: ['pea'], isoDate: '2026-01-21' }
-];
+
 
 export function renderFinanceiroView(container, storageKey) {
     const options = (storageKey && typeof storageKey === 'object') ? storageKey : { storageKey };
@@ -84,6 +69,7 @@ export function renderFinanceiroView(container, storageKey) {
         expandedContractsByFicha: {},
         syncStatus: mapSyncStatusToUi(initialSyncMeta?.syncStatus || 'remote'),
         syncUpdatedAt: initialSyncMeta?.updatedAt || existingState?.updatedAt || null,
+        conflictUpdatedAt: null,
         isRefreshingRemote: false
     };
 
@@ -124,6 +110,7 @@ export function renderFinanceiroView(container, storageKey) {
         applyPersistedState(state, normalized.state);
         state.syncStatus = mapSyncStatusToUi(normalized.syncStatus);
         state.syncUpdatedAt = normalized.updatedAt || state.updatedAt || null;
+        state.conflictUpdatedAt = null;
         if (resolvedStorageKey) {
             saveUserScopedJsonStorage(resolvedStorageKey, buildPersistedFinanceState(state));
         }
@@ -160,16 +147,25 @@ export function renderFinanceiroView(container, storageKey) {
         notifySyncStateChange({
             status: state.syncStatus,
             updatedAt: state.syncUpdatedAt,
-            shouldBlockUnload: ['saving', 'syncing', 'refreshing'].includes(state.syncStatus)
+            shouldBlockUnload: ['saving', 'syncing', 'refreshing', 'conflict'].includes(state.syncStatus)
         });
     };
 
-    const persistState = () => {
+    const persistState = ({ remote = true } = {}) => {
+        if (!remote) {
+            if (resolvedStorageKey) {
+                saveUserScopedJsonStorage(resolvedStorageKey, buildPersistedFinanceState(state));
+            }
+            return;
+        }
+        const baseUpdatedAt = state.syncUpdatedAt || state.updatedAt || null;
         state.updatedAt = new Date().toISOString();
-        const snapshot = buildPersistedFinanceState(state);
+        const snapshot = {
+            ...buildPersistedFinanceState(state),
+            baseUpdatedAt
+        };
         if (persistPreference) {
             state.syncStatus = 'saving';
-            state.syncUpdatedAt = state.updatedAt;
             const currentVersion = ++persistVersion;
             emitSyncState();
             render();
@@ -177,9 +173,23 @@ export function renderFinanceiroView(container, storageKey) {
                 .then((result) => {
                     if (currentVersion !== persistVersion) return;
                     const normalized = normalizeFinanceSyncResult(result, snapshot);
+                    if (normalized.syncStatus === 'conflict') {
+                        state.syncStatus = 'conflict';
+                        state.conflictUpdatedAt = normalized.updatedAt || null;
+                        emitSyncState();
+                        render();
+                        showNoticeModal(
+                            'Financeiro desatualizado',
+                            normalized.errorMessage || 'Outra aba ou dispositivo salvou uma versão mais recente. Atualize os dados antes de salvar novamente.'
+                        );
+                        return;
+                    }
                     applyPersistedState(state, normalized.state);
-                    state.syncUpdatedAt = normalized.updatedAt || state.updatedAt || new Date().toISOString();
                     state.syncStatus = mapSyncStatusToUi(normalized.syncStatus);
+                    state.conflictUpdatedAt = null;
+                    if (state.syncStatus === 'synced') {
+                        state.syncUpdatedAt = normalized.updatedAt || state.updatedAt || new Date().toISOString();
+                    }
                     emitSyncState();
                     render();
                 })
@@ -194,6 +204,7 @@ export function renderFinanceiroView(container, storageKey) {
         saveUserScopedJsonStorage(resolvedStorageKey, snapshot);
         state.syncStatus = 'synced';
         state.syncUpdatedAt = state.updatedAt;
+        state.conflictUpdatedAt = null;
         emitSyncState();
     };
 
@@ -213,7 +224,7 @@ export function renderFinanceiroView(container, storageKey) {
             : null;
         const action = String(button.dataset.financeDetailAction || '');
 
-        if (action === 'edit-cashbox-row' && selectedCashbox) {
+        if ((action === 'edit-cashbox-row' || action === 'repeat-cashbox-row') && selectedCashbox) {
             const row = findItemById(selectedCashbox.transactions || [], button.dataset.rowId);
             if (!row) return;
             if (String(row.id).startsWith('ficha-payment-')) {
@@ -224,12 +235,12 @@ export function renderFinanceiroView(container, storageKey) {
                 state.selectedCashboxId = null;
                 state.fichaModal = {
                     type: 'pagamento',
-                    editingContractId: paymentRef.contractId,
-                    editingEntryId: paymentRef.entry.id,
+                    editingContractId: action === 'edit-cashbox-row' ? paymentRef.contractId : undefined,
+                    editingEntryId: action === 'edit-cashbox-row' ? paymentRef.entry.id : undefined,
                     linkedContractId: paymentRef.contractId,
                     date: formatDateForInput(paymentRef.entry.date),
                     description: paymentRef.entry.description,
-                    value: formatCurrency(paymentRef.entry.value)
+                    value: formatCurrency(Math.abs(parseCurrencyValue(paymentRef.entry.value || '')))
                 };
                 state.detailMenuKey = null;
                 render();
@@ -240,10 +251,10 @@ export function renderFinanceiroView(container, storageKey) {
                 type: row.transferId ? 'retirada' : (row.type || (row.credit ? 'entrada' : 'debito')),
                 date: formatDateForInput(row.isoDate || parseInputDateToIso(row.date)),
                 description: row.description || '',
-                value: row.credit || row.debit || '',
-                editingTransactionId: row.id,
-                editingTransferId: row.transferId || '',
-                transferDirection: row.transferDirection || '',
+                value: formatCurrency(Math.abs(parseCurrencyValue(row.credit || row.debit || ''))),
+                editingTransactionId: action === 'edit-cashbox-row' ? row.id : undefined,
+                editingTransferId: action === 'edit-cashbox-row' ? row.transferId || '' : '',
+                transferDirection: action === 'edit-cashbox-row' ? row.transferDirection || '' : '',
                 destinationCashboxId: row.transferDirection === 'outgoing' ? (row.counterpartCashboxId || '') : ''
             };
             state.detailMenuKey = null;
@@ -334,22 +345,29 @@ export function renderFinanceiroView(container, storageKey) {
             return;
         }
 
-                if ((action === 'edit-entry' || action === 'delete-entry') && selectedFicha) {
-                    const contract = findContractById(selectedFicha.contracts, button.dataset.contractId);
-                    const entryType = String(button.dataset.entryType || '');
-                    const collectionKey = getFichaEntryCollectionKey(entryType);
-                    const entry = findItemById(contract?.[collectionKey] || [], button.dataset.entryId);
-                    if (!contract || !entry) return;
+        if (action === 'edit-entry' || action === 'delete-entry' || action === 'repeat-entry') {
+            const actionFicha = button.dataset.fichaId
+                ? findItemById(state.itemsByTab.fichas, button.dataset.fichaId)
+                : selectedFicha;
+            const contract = findContractById(actionFicha?.contracts, button.dataset.contractId);
+            const entryType = String(button.dataset.entryType || '');
+            const collectionKey = getFichaEntryCollectionKey(entryType);
+            const entry = findItemById(contract?.[collectionKey] || [], button.dataset.entryId);
+            if (!actionFicha || !contract || !entry) return;
 
-                    if (action === 'edit-entry') {
-                        state.fichaModal = {
-                            type: entryType === 'payment' ? 'pagamento' : entryType === 'debit' ? 'debito' : 'agendamento',
-                            editingContractId: contract.id,
-                            editingEntryId: entry.id,
-                            linkedContractId: contract.id,
+            if (action === 'edit-entry' || action === 'repeat-entry') {
+                state.activeTab = 'fichas';
+                state.selectedFichaId = actionFicha.id;
+                state.selectedCashboxId = null;
+                state.expandedContractsByFicha[actionFicha.id] = [contract.id];
+                state.fichaModal = {
+                    type: entryType === 'payment' ? 'pagamento' : entryType === 'debit' ? 'debito' : 'agendamento',
+                    editingContractId: action === 'edit-entry' ? contract.id : undefined,
+                    editingEntryId: action === 'edit-entry' ? entry.id : undefined,
+                    linkedContractId: contract.id,
                     date: formatDateForInput(entry.date),
                     description: entry.description,
-                    value: formatCurrency(entry.value)
+                    value: formatCurrency(Math.abs(parseCurrencyValue(entry.value || '')))
                 };
                 state.detailMenuKey = null;
                 render();
@@ -359,7 +377,7 @@ export function renderFinanceiroView(container, storageKey) {
 
             showConfirmModal('Excluir lançamento', `Deseja excluir o lançamento "${entry.description}"?`, async () => {
                 state.itemsByTab.fichas = (state.itemsByTab.fichas || []).map((ficha) => {
-                    if (String(ficha.id) !== String(selectedFicha.id)) return ficha;
+                    if (String(ficha.id) !== String(actionFicha.id)) return ficha;
                     const nextContracts = (ficha.contracts || []).map((item) => (
                         String(item.id) === String(contract.id)
                             ? {
@@ -405,6 +423,9 @@ export function renderFinanceiroView(container, storageKey) {
     const render = () => {
         const activeTab = FINANCE_TABS.find((tab) => tab.id === state.activeTab) || FINANCE_TABS[0];
         const activeItems = getSortedFinanceItems(state.itemsByTab[activeTab.id] || [], activeTab.id).map((item) => normalizeFinanceItemForRender(item, activeTab.id));
+        const scheduleDashboard = activeTab.id === 'agendamentos'
+            ? buildFinanceScheduleDashboard(state.itemsByTab.fichas || [])
+            : null;
         const selectedCashbox = activeTab.id === 'caixa'
             ? findItemById(state.itemsByTab.caixa, state.selectedCashboxId)
             : null;
@@ -412,9 +433,12 @@ export function renderFinanceiroView(container, storageKey) {
             ? findItemById(state.itemsByTab.fichas, state.selectedFichaId)
             : null;
         const shouldShowSyncBar = state.syncStatus !== 'synced' || state.isRefreshingRemote;
+        container.classList.add('finance-content-area');
+        container.classList.toggle('finance-content-area--detail', !!(selectedCashbox || selectedFicha));
+        container.classList.toggle('finance-content-area--cashbox-detail', !!selectedCashbox);
 
         container.innerHTML = `
-            <section class="finance-home ${hasRenderedOnce ? '' : 'animate-fade-in'}">
+            <section class="finance-home ${(selectedCashbox || selectedFicha) ? 'finance-home--detail' : ''} ${hasRenderedOnce ? '' : 'animate-fade-in'}">
                 <div class="finance-home__shell">
                     <div class="finance-home__toolbar client-master-header">
                         <div class="finance-home__tabs" role="tablist" aria-label="Visualizacao do financeiro">
@@ -436,10 +460,10 @@ export function renderFinanceiroView(container, storageKey) {
                                     <span class="finance-sync-pill__dot" aria-hidden="true"></span>
                                     <div>
                                         <strong>${getFinanceSyncLabel(state.syncStatus)}</strong>
-                                        <span>${getFinanceSyncHint(state.syncStatus, state.syncUpdatedAt)}</span>
+                                        <span>${getFinanceSyncHint(state.syncStatus, state.syncUpdatedAt, state.conflictUpdatedAt)}</span>
                                     </div>
                                 </div>
-                                ${state.syncStatus === 'offline' || state.isRefreshingRemote ? `
+                                ${state.syncStatus === 'offline' || state.syncStatus === 'conflict' || state.isRefreshingRemote ? `
                                     <button
                                         type="button"
                                         class="btn-pill finance-home__refresh-button"
@@ -461,15 +485,25 @@ export function renderFinanceiroView(container, storageKey) {
                     ${selectedCashbox ? renderCashboxDetailView(selectedCashbox, state.itemsByTab.fichas || [], state.detailMenuKey, state.cashboxFilterMode, state.cashboxFilterMonth, state.cashboxFilterYear) : selectedFicha ? renderFichaDetailView(selectedFicha, state.itemsByTab.caixa || [], state.detailMenuKey, state.fichaFilterMode, state.fichaFilterMonth, state.fichaFilterYear, state.expandedContractsByFicha[selectedFicha.id] || []) : `
                         <div class="finance-home__body">
                             <div class="finance-home__actions">
-                                <button
-                                    type="button"
-                                    class="client-master-add"
-                                    data-finance-add="${activeTab.id}"
-                                    aria-label="Adicionar ${activeTab.label}"
-                                    title="Adicionar ${activeTab.label}"
-                                >
-                                    ${renderAddIcon()}
-                                </button>
+                                ${activeTab.id === 'agendamentos' ? `
+                                    <button
+                                        type="button"
+                                        class="btn-pill finance-schedule__open-fichas"
+                                        data-finance-open-fichas
+                                    >
+                                        Abrir fichas
+                                    </button>
+                                ` : `
+                                    <button
+                                        type="button"
+                                        class="client-master-add"
+                                        data-finance-add="${activeTab.id}"
+                                        aria-label="Adicionar ${activeTab.label}"
+                                        title="Adicionar ${activeTab.label}"
+                                    >
+                                        ${renderAddIcon()}
+                                    </button>
+                                `}
                                 ${activeTab.id === 'caixa' || activeTab.id === 'fichas' ? `
                                     <div class="finance-view-switch" role="tablist" aria-label="Modo de visualizacao de ${activeTab.id === 'caixa' ? 'caixas' : 'fichas'}">
                                         <button
@@ -494,6 +528,7 @@ export function renderFinanceiroView(container, storageKey) {
                                 </div>
                             </div>
 
+                            ${activeTab.id === 'agendamentos' ? renderFinanceScheduleDashboard(scheduleDashboard, activeItems, state.openMenuId, state.detailMenuKey) : `
                             <div class="${((activeTab.id === 'fichas' && state.fichaViewMode === 'lista') || (activeTab.id === 'caixa' && state.cashboxViewMode === 'lista')) ? 'finance-list' : 'finance-home__cards-grid'}">
                                 ${activeItems.length === 0 ? `
                                     <article class="finance-card finance-card--empty">
@@ -509,6 +544,7 @@ export function renderFinanceiroView(container, storageKey) {
                                         : renderFinanceCard(item, state.openMenuId)
                                 )).join('')}
                             </div>
+                            `}
                         </div>
                     `}
                 </div>
@@ -563,12 +599,12 @@ export function renderFinanceiroView(container, storageKey) {
                 state.selectedFichaId = null;
                 state.actionModal = null;
                 state.fichaModal = null;
-                persistState();
+                persistState({ remote: false });
                 render();
             });
         });
 
-        container.querySelector('[data-finance-refresh]')?.addEventListener('click', async () => {
+        const refreshRemoteState = async () => {
             if (!reloadPreference || state.isRefreshingRemote) return;
             state.isRefreshingRemote = true;
             state.syncStatus = 'refreshing';
@@ -584,6 +620,19 @@ export function renderFinanceiroView(container, storageKey) {
                 state.isRefreshingRemote = false;
                 render();
             }
+        };
+
+        container.querySelector('[data-finance-refresh]')?.addEventListener('click', () => {
+            if (state.syncStatus === 'conflict') {
+                showConfirmModal(
+                    'Atualizar financeiro',
+                    'Existe uma versão mais recente no servidor. Atualizar agora recarrega os dados remotos e interrompe o salvamento desta tela.',
+                    refreshRemoteState,
+                    { confirmText: 'ATUALIZAR', confirmingText: 'ATUALIZANDO...', icon: 'refresh' }
+                );
+                return;
+            }
+            void refreshRemoteState();
         });
 
         container.querySelectorAll('[data-cashbox-view-mode]').forEach((button) => {
@@ -591,7 +640,7 @@ export function renderFinanceiroView(container, storageKey) {
                 const nextMode = String(button.dataset.cashboxViewMode || '');
                 if (!['cards', 'lista'].includes(nextMode) || nextMode === state.cashboxViewMode) return;
                 state.cashboxViewMode = nextMode;
-                persistState();
+                persistState({ remote: false });
                 render();
             });
         });
@@ -601,7 +650,7 @@ export function renderFinanceiroView(container, storageKey) {
                 const nextMode = String(button.dataset.fichaViewMode || '');
                 if (!['cards', 'lista'].includes(nextMode) || nextMode === state.fichaViewMode) return;
                 state.fichaViewMode = nextMode;
-                persistState();
+                persistState({ remote: false });
                 render();
             });
         });
@@ -616,6 +665,45 @@ export function renderFinanceiroView(container, storageKey) {
             state.fichaFilterMonth = getCurrentMonthValue();
             state.fichaFilterYear = getCurrentYearValue();
             render();
+        });
+
+        container.querySelector('[data-finance-open-fichas]')?.addEventListener('click', () => {
+            state.activeTab = 'fichas';
+            state.selectedCashboxId = null;
+            state.selectedFichaId = null;
+            state.openMenuId = null;
+            state.detailMenuKey = null;
+            persistState({ remote: false });
+            render();
+        });
+
+        container.querySelectorAll('[data-finance-schedule-open]').forEach((node) => {
+            const openSchedule = () => {
+                const fichaId = String(node.dataset.fichaId || '');
+                const contractId = String(node.dataset.contractId || '');
+                const ficha = findItemById(state.itemsByTab.fichas, fichaId);
+                if (!ficha) return;
+                state.activeTab = 'fichas';
+                state.selectedFichaId = ficha.id;
+                state.selectedCashboxId = null;
+                state.openMenuId = null;
+                state.detailMenuKey = null;
+                if (contractId) {
+                    state.expandedContractsByFicha[ficha.id] = [contractId];
+                }
+                persistState({ remote: false });
+                render();
+            };
+
+            node.addEventListener('click', (event) => {
+                if (event.target instanceof Element && event.target.closest('.finance-card__menu-wrap')) return;
+                openSchedule();
+            });
+            node.addEventListener('keydown', (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                openSchedule();
+            });
         });
 
         container.querySelectorAll('[data-cashbox-filter]').forEach((button) => {
@@ -648,11 +736,13 @@ export function renderFinanceiroView(container, storageKey) {
             });
         });
 
-        container.querySelector('[name="cashbox_filter_month"]')?.addEventListener('change', (event) => {
-            const nextMonth = String(event.currentTarget.value || '');
-            if (!/^\d{4}-\d{2}$/.test(nextMonth)) return;
-            state.cashboxFilterMonth = nextMonth;
-            render();
+        container.querySelectorAll('[data-cashbox-month]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const nextMonth = String(button.dataset.cashboxMonth || '');
+                if (!/^\d{4}-\d{2}$/.test(nextMonth)) return;
+                state.cashboxFilterMonth = nextMonth;
+                render();
+            });
         });
 
         container.querySelector('[name="cashbox_filter_year"]')?.addEventListener('change', (event) => {
@@ -662,17 +752,37 @@ export function renderFinanceiroView(container, storageKey) {
             render();
         });
 
-        container.querySelector('[name="ficha_filter_month"]')?.addEventListener('change', (event) => {
-            const nextMonth = String(event.currentTarget.value || '');
-            if (!/^\d{4}-\d{2}$/.test(nextMonth)) return;
-            state.fichaFilterMonth = nextMonth;
+        container.querySelector('[name="cashbox_filter_month_year"]')?.addEventListener('change', (event) => {
+            const nextYear = String(event.currentTarget.value || '');
+            if (!/^\d{4}$/.test(nextYear)) return;
+            const currentMonth = state.cashboxFilterMonth || getCurrentMonthValue();
+            const [_, currentM] = currentMonth.split('-');
+            state.cashboxFilterMonth = `${nextYear}-${currentM}`;
             render();
+        });
+
+        container.querySelectorAll('[data-ficha-month]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const nextMonth = String(button.dataset.fichaMonth || '');
+                if (!/^\d{4}-\d{2}$/.test(nextMonth)) return;
+                state.fichaFilterMonth = nextMonth;
+                render();
+            });
         });
 
         container.querySelector('[name="ficha_filter_year"]')?.addEventListener('change', (event) => {
             const nextYear = String(event.currentTarget.value || '');
             if (!/^\d{4}$/.test(nextYear)) return;
             state.fichaFilterYear = nextYear;
+            render();
+        });
+
+        container.querySelector('[name="ficha_filter_month_year"]')?.addEventListener('change', (event) => {
+            const nextYear = String(event.currentTarget.value || '');
+            if (!/^\d{4}$/.test(nextYear)) return;
+            const currentMonth = state.fichaFilterMonth || getCurrentMonthValue();
+            const [_, currentM] = currentMonth.split('-');
+            state.fichaFilterMonth = `${nextYear}-${currentM}`;
             render();
         });
 
@@ -1212,7 +1322,8 @@ function normalizeFinanceSyncResult(result, fallbackState = null) {
         return {
             state: result.state,
             syncStatus: result.syncStatus || 'remote',
-            updatedAt: result.updatedAt || result.state?.updatedAt || null
+            updatedAt: result.updatedAt || result.state?.updatedAt || null,
+            errorMessage: result.errorMessage || ''
         };
     }
 
@@ -1227,6 +1338,7 @@ function mapSyncStatusToUi(syncStatus) {
     if (syncStatus === 'local-fallback') return 'offline';
     if (syncStatus === 'migrated-local') return 'syncing';
     if (syncStatus === 'remote') return 'synced';
+    if (syncStatus === 'conflict') return 'conflict';
     if (syncStatus === 'refreshing') return 'refreshing';
     if (syncStatus === 'saving') return 'saving';
     return syncStatus || 'synced';
@@ -1235,14 +1347,20 @@ function mapSyncStatusToUi(syncStatus) {
 function getFinanceSyncLabel(syncStatus) {
     if (syncStatus === 'saving' || syncStatus === 'syncing') return 'Salvando na nuvem';
     if (syncStatus === 'refreshing') return 'Atualizando do remoto';
+    if (syncStatus === 'conflict') return 'Atualizacao bloqueada';
     if (syncStatus === 'offline') return 'Salvo apenas neste navegador';
     return 'Sincronizado';
 }
 
-function getFinanceSyncHint(syncStatus, updatedAt) {
+function getFinanceSyncHint(syncStatus, updatedAt, conflictUpdatedAt = null) {
     const suffix = updatedAt ? `Ultima atualizacao: ${formatSyncTimestamp(updatedAt)}` : '';
     if (syncStatus === 'saving' || syncStatus === 'syncing') return 'Aguarde antes de fechar a pagina.';
     if (syncStatus === 'refreshing') return 'Buscando os dados mais recentes do servidor.';
+    if (syncStatus === 'conflict') {
+        return conflictUpdatedAt
+            ? `Servidor atualizado em ${formatSyncTimestamp(conflictUpdatedAt)}. Rascunho local preservado.`
+            : 'O servidor tem uma versao mais recente. Rascunho local preservado neste navegador.';
+    }
     if (syncStatus === 'offline') return 'Houve falha de rede. Use "Atualizar agora" depois que a conexao voltar.';
     return suffix || 'Os dados do financeiro ja estao na nuvem.';
 }
@@ -1288,8 +1406,7 @@ function normalizeFichas(fichas = []) {
 
 function normalizeCashboxes(cashboxes = []) {
     return (cashboxes || []).map((cashbox) => {
-        const repairedTransactions = repairLegacyCashboxTransactions(cashbox);
-        const normalizedTransactions = recomputeCashboxBalances(repairedTransactions);
+        const normalizedTransactions = recomputeCashboxBalances(cashbox.transactions || []);
         return {
             ...cashbox,
             transactions: normalizedTransactions,
@@ -1355,41 +1472,7 @@ function createFinanceItem(activeTab, customName = '') {
     };
 }
 
-function repairLegacyCashboxTransactions(cashbox) {
-    const transactions = Array.isArray(cashbox?.transactions) ? cashbox.transactions : [];
-    if (normalizeText(cashbox?.title) !== 'geoconsult') return transactions;
 
-    return transactions.map((transaction) => {
-        if (String(transaction?.id || '').startsWith('ficha-payment-')) {
-            return transaction;
-        }
-
-        const match = GEOCONSULT_LEGACY_DATE_FIXES.find((rule) => {
-            const description = normalizeText(transaction.description);
-            const amount = transaction.credit
-                ? parseCurrencyValue(transaction.credit)
-                : Math.abs(parseCurrencyValue(transaction.debit));
-            const type = transaction.credit ? 'entrada' : 'debito';
-            return (
-                type === rule.type &&
-                Math.abs(amount - rule.amount) < 0.001 &&
-                rule.descriptions.some((label) => (
-                    description === label ||
-                    description.includes(label) ||
-                    label.includes(description)
-                ))
-            );
-        });
-
-        if (!match) return transaction;
-
-        return {
-            ...transaction,
-            isoDate: match.isoDate,
-            date: formatDateForInput(match.isoDate)
-        };
-    });
-}
 
 function renderFinanceCard(item, openMenuId) {
     const isMenuOpen = String(openMenuId) === String(item.id);
@@ -1479,6 +1562,125 @@ function renderFinanceListRow(item, openMenuId) {
     `;
 }
 
+function renderFinanceScheduleDashboard(scheduleDashboard, legacyItems = [], openMenuId = null, detailMenuKey = null) {
+    const dashboard = scheduleDashboard || buildFinanceScheduleDashboard([]);
+    return `
+        <div class="finance-schedule">
+            <section class="finance-schedule__summary" aria-label="Resumo dos agendamentos">
+                ${dashboard.summaryCards.map((card) => `
+                    <article class="finance-schedule-summary finance-schedule-summary--${card.tone}">
+                        <span>${card.label}</span>
+                        <strong>${card.value}</strong>
+                        <small>${card.countLabel}</small>
+                    </article>
+                `).join('')}
+            </section>
+
+            <div class="finance-schedule__groups">
+                ${dashboard.groups.map((group) => renderFinanceScheduleGroup(group, detailMenuKey)).join('')}
+            </div>
+
+            ${legacyItems.length > 0 ? `
+                <section class="finance-schedule__legacy">
+                    <div class="finance-schedule__section-head">
+                        <div>
+                            <p class="label-tech">Registros avulsos</p>
+                            <h3 class="font-black">Agendamentos antigos</h3>
+                        </div>
+                    </div>
+                    <div class="finance-home__cards-grid finance-schedule__legacy-grid">
+                        ${legacyItems.map((item) => renderFinanceCard(item, openMenuId)).join('')}
+                    </div>
+                </section>
+            ` : ''}
+        </div>
+    `;
+}
+
+function renderFinanceScheduleGroup(group, detailMenuKey = null) {
+    return `
+        <section class="finance-schedule-group finance-schedule-group--${group.tone}">
+            <div class="finance-schedule__section-head">
+                <div>
+                    <p class="label-tech">${group.eyebrow}</p>
+                    <h3 class="font-black">${group.label}</h3>
+                </div>
+                <div class="finance-schedule-group__total">
+                    <span>${group.rows.length} ${group.rows.length === 1 ? 'item' : 'itens'}</span>
+                    <strong>${formatCurrency(group.total)}</strong>
+                </div>
+            </div>
+            <div class="finance-schedule-group__rows">
+                ${group.rows.length === 0 ? `
+                    <div class="finance-schedule-empty">
+                        <span>${group.emptyText}</span>
+                    </div>
+                ` : group.rows.map((row) => renderFinanceScheduleRow(row, detailMenuKey)).join('')}
+            </div>
+        </section>
+    `;
+}
+
+function renderFinanceScheduleRow(row, detailMenuKey = null) {
+    const menuKey = `schedule:${row.fichaId}:${row.contractId}:${row.entryId}`;
+    return `
+        <article
+            class="finance-schedule-row finance-schedule-row--${row.tone}"
+            data-finance-schedule-open="${escapeAttribute(row.entryId)}"
+            data-ficha-id="${escapeAttribute(row.fichaId)}"
+            data-contract-id="${escapeAttribute(row.contractId)}"
+            role="button"
+            tabindex="0"
+        >
+            <div class="finance-schedule-row__date">
+                <strong>${escapeAttribute(row.day)}</strong>
+                <span>${escapeAttribute(row.monthLabel)}</span>
+            </div>
+            <div class="finance-schedule-row__main">
+                <div>
+                    <strong>${escapeAttribute(row.description)}</strong>
+                    <span>${escapeAttribute(row.fichaTitle)} - ${escapeAttribute(row.contractDescription)}</span>
+                </div>
+                <span class="finance-schedule-row__badge">${escapeAttribute(row.dueLabel)}</span>
+            </div>
+            <strong class="finance-schedule-row__value">${escapeAttribute(row.value)}</strong>
+            <div class="finance-card__menu-wrap">
+                <button type="button" class="cashbox-detail__row-menu" data-finance-detail-menu-trigger="${escapeAttribute(menuKey)}" aria-label="Abrir menu do agendamento">
+                    ${renderMenuIcon()}
+                </button>
+                ${detailMenuKey === menuKey ? `
+                    <div class="finance-card__menu">
+                        <button
+                            type="button"
+                            data-finance-detail-action="edit-entry"
+                            data-ficha-id="${escapeAttribute(row.fichaId)}"
+                            data-contract-id="${escapeAttribute(row.contractId)}"
+                            data-entry-type="schedule"
+                            data-entry-id="${escapeAttribute(row.entryId)}"
+                        >Editar</button>
+                        <button
+                            type="button"
+                            data-finance-detail-action="repeat-entry"
+                            data-ficha-id="${escapeAttribute(row.fichaId)}"
+                            data-contract-id="${escapeAttribute(row.contractId)}"
+                            data-entry-type="schedule"
+                            data-entry-id="${escapeAttribute(row.entryId)}"
+                        >Repetir</button>
+                        <button
+                            type="button"
+                            data-finance-detail-action="delete-entry"
+                            data-ficha-id="${escapeAttribute(row.fichaId)}"
+                            data-contract-id="${escapeAttribute(row.contractId)}"
+                            data-entry-type="schedule"
+                            data-entry-id="${escapeAttribute(row.entryId)}"
+                        >Excluir</button>
+                    </div>
+                ` : ''}
+            </div>
+        </article>
+    `;
+}
+
 function getSortedFinanceItems(items = [], tabId = '') {
     const safeItems = Array.isArray(items) ? [...items] : [];
     if (tabId !== 'fichas') return safeItems;
@@ -1509,35 +1711,40 @@ function renderCashboxDetailView(cashbox, fichas = [], detailMenuKey = null, fil
     const transactions = filterContext.transactions;
     const contractsSummary = buildCashboxContractsSummary(fichas, cashbox.id);
     return `
-        <div class="cashbox-detail">
+        <div class="cashbox-detail cashbox-detail--cashbox">
             <div class="cashbox-detail__header">
-                <button type="button" class="cashbox-detail__back" data-finance-back aria-label="Voltar para caixas">
-                    ${renderBackIcon()}
-                </button>
-                <div class="cashbox-detail__title-wrap">
-                    <h2 class="font-black cashbox-detail__title">${cashbox.title}</h2>
-                </div>
-                <div class="cashbox-detail__filter" role="tablist" aria-label="Filtro do caixa">
-                    <button type="button" class="cashbox-detail__filter-pill ${filterMode === 'mensal' ? 'is-active' : ''}" data-cashbox-filter="mensal">Mensal</button>
-                    <button type="button" class="cashbox-detail__filter-pill ${filterMode === 'anual' ? 'is-active' : ''}" data-cashbox-filter="anual">Anual</button>
-                    <button type="button" class="cashbox-detail__filter-pill ${filterMode === 'tudo' ? 'is-active' : ''}" data-cashbox-filter="tudo">Tudo</button>
-                    ${filterMode === 'mensal' ? `
-                        <select
-                            class="cashbox-detail__month-picker"
-                            name="cashbox_filter_month"
-                            aria-label="Selecionar mês"
-                        >
-                            ${renderCashboxMonthOptions(filterContext.selectedMonth)}
-                        </select>
-                    ` : filterMode === 'anual' ? `
-                        <select
-                            class="cashbox-detail__month-picker"
-                            name="cashbox_filter_year"
-                            aria-label="Selecionar ano"
-                        >
-                            ${renderCashboxYearOptions(filterContext.selectedYear, cashbox.transactions || [])}
-                        </select>
-                    ` : ''}
+                <div class="cashbox-detail__header-main">
+                    <button type="button" class="cashbox-detail__back" data-finance-back aria-label="Voltar para caixas">
+                        ${renderBackIcon()}
+                    </button>
+                    <div class="cashbox-detail__title-wrap">
+                        <h2 class="font-black cashbox-detail__title">${cashbox.title}</h2>
+                        <div class="cashbox-detail__filter" role="tablist" aria-label="Filtro do caixa">
+                            <button type="button" class="cashbox-detail__filter-pill ${filterMode === 'mensal' ? 'is-active' : ''}" data-cashbox-filter="mensal">Mensal</button>
+                            <button type="button" class="cashbox-detail__filter-pill ${filterMode === 'anual' ? 'is-active' : ''}" data-cashbox-filter="anual">Anual</button>
+                            <button type="button" class="cashbox-detail__filter-pill ${filterMode === 'tudo' ? 'is-active' : ''}" data-cashbox-filter="tudo">Tudo</button>
+                            ${filterMode === 'mensal' ? `
+                                <div class="cashbox-detail__months" role="tablist" aria-label="Meses do ano">
+                                    ${renderCashboxMonthButtons(filterContext.selectedMonth, 'cashbox')}
+                                    <select
+                                        class="cashbox-detail__month-picker"
+                                        name="cashbox_filter_month_year"
+                                        aria-label="Selecionar ano"
+                                    >
+                                        ${renderCashboxYearOptions(filterContext.selectedMonth.split('-')[0], cashbox.transactions || [])}
+                                    </select>
+                                </div>
+                            ` : filterMode === 'anual' ? `
+                                <select
+                                    class="cashbox-detail__month-picker"
+                                    name="cashbox_filter_year"
+                                    aria-label="Selecionar ano"
+                                >
+                                    ${renderCashboxYearOptions(filterContext.selectedYear, cashbox.transactions || [])}
+                                </select>
+                            ` : ''}
+                        </div>
+                    </div>
                 </div>
                 <div class="cashbox-detail__actions">
                     <button type="button" class="cashbox-detail__action cashbox-detail__action--entrada" data-cashbox-action="entrada">
@@ -1641,15 +1848,16 @@ function buildCashboxFilterContext(transactions = [], filterMode = 'tudo', selec
     };
 }
 
-function renderCashboxMonthOptions(selectedMonth) {
+function renderCashboxMonthButtons(selectedMonth, context) {
     const monthValue = /^\d{4}-\d{2}$/.test(selectedMonth || '') ? selectedMonth : getCurrentMonthValue();
     const [selectedYear] = monthValue.split('-');
-    return Array.from({ length: 12 }, (_, index) => {
+    const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+    return months.map((monthAbbr, index) => {
         const monthNumber = String(index + 1).padStart(2, '0');
         const value = `${selectedYear}-${monthNumber}`;
-        const label = new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(`${selectedYear}-${monthNumber}-01T12:00:00`));
-        const displayLabel = label.charAt(0).toUpperCase() + label.slice(1);
-        return `<option value="${escapeAttribute(value)}" ${value === monthValue ? 'selected' : ''}>${displayLabel}</option>`;
+        const isActive = value === monthValue;
+        return `<button type="button" class="cashbox-detail__month-tab ${isActive ? 'is-active' : ''}" data-${context}-month="${escapeAttribute(value)}">${monthAbbr}</button>`;
     }).join('');
 }
 
@@ -1703,13 +1911,16 @@ function renderFichaDetailView(
                     <button type="button" class="cashbox-detail__filter-pill ${filterMode === 'anual' ? 'is-active' : ''}" data-ficha-filter="anual">Anual</button>
                     <button type="button" class="cashbox-detail__filter-pill ${filterMode === 'tudo' ? 'is-active' : ''}" data-ficha-filter="tudo">Tudo</button>
                     ${filterMode === 'mensal' ? `
-                        <select
-                            class="cashbox-detail__month-picker"
-                            name="ficha_filter_month"
-                            aria-label="Selecionar mês da ficha"
-                        >
-                            ${renderCashboxMonthOptions(selectedMonth)}
-                        </select>
+                        <div class="cashbox-detail__months" role="tablist" aria-label="Meses da ficha">
+                            ${renderCashboxMonthButtons(selectedMonth, 'ficha')}
+                            <select
+                                class="cashbox-detail__month-picker"
+                                name="ficha_filter_month_year"
+                                aria-label="Selecionar ano"
+                            >
+                                ${renderCashboxYearOptions(selectedMonth.split('-')[0], filterEntries)}
+                            </select>
+                        </div>
                     ` : filterMode === 'anual' ? `
                         <select
                             class="cashbox-detail__month-picker"
@@ -1758,7 +1969,7 @@ function renderFichaDetailView(
                             <strong class="${totals.balance < 0 ? 'is-negative' : totals.balance > 0 ? 'is-positive' : 'is-info'}">${formatCurrency(totals.balance)}</strong>
                         </div>
                     </div>
-                    <div class="cashbox-detail__table-wrap ficha-detail-panel__table">
+                    <div class="cashbox-detail__table-wrap ficha-detail-panel__table ficha-detail-panel__table--statement custom-scrollbar">
                         <table class="cashbox-detail__table">
                             <thead>
                                 <tr>
@@ -1789,7 +2000,7 @@ function renderFichaDetailView(
                             <h3 class="font-black ficha-detail-panel__title">Resumo por contrato</h3>
                         </div>
                     </div>
-                    <div class="ficha-contract-list">
+                    <div class="ficha-contract-list custom-scrollbar">
                         ${contracts.length === 0 ? `
                             <div class="finance-card finance-card--empty ficha-empty-state">
                                 <div class="finance-card__empty-copy">
@@ -1874,7 +2085,7 @@ function renderFichaContractCard(
             </div>
             ${isExpanded ? `
                 <div class="ficha-contract-card__body">
-                    <div class="cashbox-detail__table-wrap">
+                    <div class="cashbox-detail__table-wrap ficha-contract-card__table-wrap custom-scrollbar">
                         <table class="cashbox-detail__table">
                             <thead>
                                 <tr>
@@ -1899,7 +2110,7 @@ function renderFichaContractCard(
                         <div class="ficha-contract-card__section-head">
                             <p class="label-tech">Agendamentos</p>
                         </div>
-                        <div class="cashbox-detail__table-wrap ficha-contract-card__table-wrap">
+                        <div class="cashbox-detail__table-wrap ficha-contract-card__table-wrap custom-scrollbar">
                             <table class="cashbox-detail__table">
                                 <thead>
                                     <tr>
@@ -1944,6 +2155,7 @@ function renderFichaGeneralStatementRow(row, detailMenuKey = null) {
                     ${detailMenuKey === menuKey ? `
                         <div class="finance-card__menu">
                             <button type="button" data-finance-detail-action="edit-entry" data-contract-id="${escapeAttribute(row.contractId)}" data-entry-type="${escapeAttribute(row.entryType)}" data-entry-id="${escapeAttribute(row.entryId)}">Editar</button>
+                            <button type="button" data-finance-detail-action="repeat-entry" data-contract-id="${escapeAttribute(row.contractId)}" data-entry-type="${escapeAttribute(row.entryType)}" data-entry-id="${escapeAttribute(row.entryId)}">Repetir</button>
                             <button type="button" data-finance-detail-action="delete-entry" data-contract-id="${escapeAttribute(row.contractId)}" data-entry-type="${escapeAttribute(row.entryType)}" data-entry-id="${escapeAttribute(row.entryId)}">Excluir</button>
                         </div>
                     ` : ''}
@@ -1970,6 +2182,7 @@ function renderFichaContractStatementRow(row, contractId, detailMenuKey = null) 
                     ${detailMenuKey === menuKey ? `
                         <div class="finance-card__menu">
                             <button type="button" data-finance-detail-action="edit-entry" data-contract-id="${escapeAttribute(contractId)}" data-entry-type="${escapeAttribute(row.entryType)}" data-entry-id="${escapeAttribute(row.entryId)}">Editar</button>
+                            <button type="button" data-finance-detail-action="repeat-entry" data-contract-id="${escapeAttribute(contractId)}" data-entry-type="${escapeAttribute(row.entryType)}" data-entry-id="${escapeAttribute(row.entryId)}">Repetir</button>
                             <button type="button" data-finance-detail-action="delete-entry" data-contract-id="${escapeAttribute(contractId)}" data-entry-type="${escapeAttribute(row.entryType)}" data-entry-id="${escapeAttribute(row.entryId)}">Excluir</button>
                         </div>
                     ` : ''}
@@ -1995,6 +2208,7 @@ function renderFichaContractScheduleRow(row, contractId, detailMenuKey = null) {
                     ${detailMenuKey === menuKey ? `
                         <div class="finance-card__menu">
                             <button type="button" data-finance-detail-action="edit-entry" data-contract-id="${escapeAttribute(contractId)}" data-entry-type="${escapeAttribute(row.entryType)}" data-entry-id="${escapeAttribute(row.entryId)}">Editar</button>
+                            <button type="button" data-finance-detail-action="repeat-entry" data-contract-id="${escapeAttribute(contractId)}" data-entry-type="${escapeAttribute(row.entryType)}" data-entry-id="${escapeAttribute(row.entryId)}">Repetir</button>
                             <button type="button" data-finance-detail-action="delete-entry" data-contract-id="${escapeAttribute(contractId)}" data-entry-type="${escapeAttribute(row.entryType)}" data-entry-id="${escapeAttribute(row.entryId)}">Excluir</button>
                         </div>
                     ` : ''}
@@ -2025,6 +2239,7 @@ function renderCashboxRow(row, detailMenuKey = null) {
                     ${detailMenuKey === menuKey ? `
                         <div class="finance-card__menu">
                             <button type="button" data-finance-detail-action="edit-cashbox-row" data-row-id="${escapeAttribute(row.id)}">Editar</button>
+                            <button type="button" data-finance-detail-action="repeat-cashbox-row" data-row-id="${escapeAttribute(row.id)}">Repetir</button>
                             <button type="button" data-finance-detail-action="delete-cashbox-row" data-row-id="${escapeAttribute(row.id)}">Excluir</button>
                         </div>
                     ` : ''}
@@ -2666,6 +2881,146 @@ function buildContractScheduleRows(contract) {
             };
         })
         .sort((left, right) => String(left.isoDate || '').localeCompare(String(right.isoDate || '')));
+}
+
+function buildFinanceScheduleDashboard(fichas = []) {
+    const rows = extractFinanceScheduleRows(fichas);
+    const groupDefinitions = [
+        {
+            id: 'overdue',
+            label: 'Vencidos',
+            eyebrow: 'Atenção',
+            tone: 'negative',
+            emptyText: 'Nenhum agendamento vencido.',
+            matcher: (row) => row.daysUntilDue < 0
+        },
+        {
+            id: 'today',
+            label: 'Hoje',
+            eyebrow: 'Vencem hoje',
+            tone: 'info',
+            emptyText: 'Nada vence hoje.',
+            matcher: (row) => row.daysUntilDue === 0
+        },
+        {
+            id: 'next7',
+            label: 'Próximos 7 dias',
+            eyebrow: 'Curto prazo',
+            tone: 'warning',
+            emptyText: 'Nenhum compromisso nos próximos 7 dias.',
+            matcher: (row) => row.daysUntilDue > 0 && row.daysUntilDue <= 7
+        },
+        {
+            id: 'next30',
+            label: 'Próximos 30 dias',
+            eyebrow: 'Agenda do mês',
+            tone: 'neutral',
+            emptyText: 'Nenhum compromisso entre 8 e 30 dias.',
+            matcher: (row) => row.daysUntilDue > 7 && row.daysUntilDue <= 30
+        },
+        {
+            id: 'later',
+            label: 'Depois de 30 dias',
+            eyebrow: 'Futuro',
+            tone: 'info',
+            emptyText: 'Nenhum compromisso futuro distante.',
+            matcher: (row) => row.daysUntilDue > 30
+        }
+    ];
+
+    const groups = groupDefinitions.map((definition) => {
+        const groupRows = rows.filter(definition.matcher);
+        return {
+            ...definition,
+            rows: groupRows,
+            total: groupRows.reduce((sum, row) => sum + Number(row.amount || 0), 0)
+        };
+    });
+
+    const countLabel = (count) => `${count} ${count === 1 ? 'item' : 'itens'}`;
+    return {
+        rows,
+        groups,
+        summaryCards: [
+            {
+                label: 'Vencido',
+                value: formatCurrency(groups.find((group) => group.id === 'overdue')?.total || 0),
+                countLabel: countLabel(groups.find((group) => group.id === 'overdue')?.rows.length || 0),
+                tone: 'negative'
+            },
+            {
+                label: 'Hoje',
+                value: formatCurrency(groups.find((group) => group.id === 'today')?.total || 0),
+                countLabel: countLabel(groups.find((group) => group.id === 'today')?.rows.length || 0),
+                tone: 'info'
+            },
+            {
+                label: '7 dias',
+                value: formatCurrency(groups.find((group) => group.id === 'next7')?.total || 0),
+                countLabel: countLabel(groups.find((group) => group.id === 'next7')?.rows.length || 0),
+                tone: 'warning'
+            },
+            {
+                label: '30 dias',
+                value: formatCurrency(groups.find((group) => group.id === 'next30')?.total || 0),
+                countLabel: countLabel(groups.find((group) => group.id === 'next30')?.rows.length || 0),
+                tone: 'neutral'
+            }
+        ]
+    };
+}
+
+function extractFinanceScheduleRows(fichas = []) {
+    return (Array.isArray(fichas) ? fichas : [])
+        .flatMap((ficha) => {
+            const contracts = Array.isArray(ficha?.contracts) ? ficha.contracts : [];
+            return contracts.flatMap((contract) => (
+                (Array.isArray(contract?.schedules) ? contract.schedules : []).map((schedule) => {
+                    const isoDate = normalizeDateStorageValue(schedule.date || '');
+                    const amount = parseFinanceAmount(schedule);
+                    const daysUntilDue = calculateDaysUntilDate(isoDate);
+                    const [year, month, day] = /^\d{4}-\d{2}-\d{2}$/.test(isoDate)
+                        ? isoDate.split('-')
+                        : ['', '', ''];
+                    return {
+                        id: `${ficha.id}:${contract.id}:${schedule.id}`,
+                        fichaId: ficha.id,
+                        fichaTitle: ficha.title || 'Ficha sem nome',
+                        contractId: contract.id,
+                        contractDescription: contract.description || 'Contrato sem descrição',
+                        entryId: schedule.id,
+                        isoDate,
+                        date: formatDateForInput(isoDate),
+                        day: day || '--',
+                        monthLabel: formatScheduleMonthLabel(year, month),
+                        description: schedule.description || 'Agendamento sem descrição',
+                        amount,
+                        value: formatCurrency(amount),
+                        daysUntilDue,
+                        dueLabel: formatDueLabel(daysUntilDue),
+                        tone: getFinanceScheduleTone(daysUntilDue)
+                    };
+                })
+            ));
+        })
+        .sort((left, right) => (
+            String(left.isoDate || '').localeCompare(String(right.isoDate || '')) ||
+            String(left.fichaTitle || '').localeCompare(String(right.fichaTitle || ''), 'pt-BR', { sensitivity: 'base' }) ||
+            String(left.description || '').localeCompare(String(right.description || ''), 'pt-BR', { sensitivity: 'base' })
+        ));
+}
+
+function formatScheduleMonthLabel(year, month) {
+    if (!/^\d{4}$/.test(String(year || '')) || !/^\d{2}$/.test(String(month || ''))) return 'Sem data';
+    const label = new Intl.DateTimeFormat('pt-BR', { month: 'short' }).format(new Date(`${year}-${month}-01T12:00:00`));
+    return label.replace('.', '').toUpperCase();
+}
+
+function getFinanceScheduleTone(daysUntilDue) {
+    if (daysUntilDue < 0) return 'negative';
+    if (daysUntilDue === 0) return 'info';
+    if (daysUntilDue <= 7) return 'warning';
+    return 'neutral';
 }
 
 function formatCurrency(value) {

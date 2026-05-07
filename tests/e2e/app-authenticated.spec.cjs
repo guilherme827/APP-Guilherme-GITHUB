@@ -149,6 +149,13 @@ async function installFinanceApiMock(page, initialState = null) {
     return () => financeState;
 }
 
+function buildIsoDateOffset(days) {
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() + days);
+    return date.toISOString().slice(0, 10);
+}
+
 test.describe('Authenticated app', () => {
     test('permite navegar pelas secoes principais com sessao mockada', async ({ page }) => {
         await bootAuthenticatedApp(page, {
@@ -183,6 +190,29 @@ test.describe('Authenticated app', () => {
         await page.getByRole('button', { name: 'Meu Perfil' }).click();
         await expect(page.getByRole('heading', { name: 'Meu Perfil' })).toBeVisible();
         await expect(page.locator('#settings-open-team')).toHaveCount(0);
+    });
+
+    test('recupera navegacao quando o usuario alterna secoes rapidamente', async ({ page }) => {
+        await bootAuthenticatedApp(page, {
+            id: 'user-1',
+            email: 'operador@geoconsult.com',
+            full_name: 'Operador Geoconsult',
+            role: 'user',
+            gender: 'neutro',
+            permissions: { view: true, edit: true, delete: false },
+            folder_access: ['painel', 'clientes', 'processos', 'prazos', 'financeiro', 'configuracoes']
+        });
+
+        for (const label of ['Titulares', 'Processos', 'Prazos', 'Financeiro', 'Configurações', 'Titulares', 'Financeiro']) {
+            await page.getByRole('button', { name: label }).click();
+            await page.waitForTimeout(60);
+        }
+
+        await page.getByRole('button', { name: 'Titulares' }).click();
+        await expect(page.getByPlaceholder('Buscar titular...')).toBeVisible();
+
+        await page.getByRole('button', { name: 'Financeiro' }).click();
+        await expect(page.getByRole('tab', { name: 'Caixa' })).toBeVisible();
     });
 
     test('permite fluxo administrativo ate a gestao de equipe', async ({ page }) => {
@@ -325,5 +355,67 @@ test.describe('Authenticated app', () => {
         const persistedState = getFinanceState();
         expect(persistedState.itemsByTab.caixa).toHaveLength(1);
         expect(persistedState.itemsByTab.fichas).toHaveLength(1);
+    });
+
+    test('organiza agendamentos financeiros por urgencia a partir das fichas', async ({ page }) => {
+        await installFinanceApiMock(page, {
+            version: 2,
+            userScoped: false,
+            activeTab: 'caixa',
+            itemsByTab: {
+                caixa: [
+                    { id: 'caixa-1', type: 'caixa', title: 'Caixa Agenda', transactions: [], createdAt: buildIsoDateOffset(-30) }
+                ],
+                fichas: [
+                    {
+                        id: 'ficha-agenda-1',
+                        type: 'ficha',
+                        title: 'Ficha Agenda',
+                        contracts: [
+                            {
+                                id: 'contract-agenda-1',
+                                createdAt: buildIsoDateOffset(-20),
+                                description: 'Contrato Agenda',
+                                cashboxId: 'caixa-1',
+                                payments: [],
+                                debits: [],
+                                schedules: [
+                                    { id: 'schedule-overdue', date: buildIsoDateOffset(-2), description: 'Parcela vencida', value: 1200 },
+                                    { id: 'schedule-week', date: buildIsoDateOffset(5), description: 'Parcela semanal', value: 2500 },
+                                    { id: 'schedule-month', date: buildIsoDateOffset(18), description: 'Parcela mensal', value: 900 }
+                                ]
+                            }
+                        ],
+                        createdAt: buildIsoDateOffset(-20)
+                    }
+                ],
+                agendamentos: []
+            },
+            updatedAt: new Date().toISOString()
+        });
+
+        await bootAuthenticatedApp(page, {
+            id: 'user-1',
+            email: 'operador@geoconsult.com',
+            full_name: 'Operador Geoconsult',
+            role: 'user',
+            gender: 'neutro',
+            permissions: { view: true, edit: true, delete: false },
+            folder_access: ['painel', 'clientes', 'processos', 'prazos', 'financeiro', 'configuracoes']
+        });
+
+        await page.getByLabel('Financeiro').click();
+        await page.getByRole('tab', { name: 'Agendamentos' }).click();
+
+        await expect(page.getByText('Vencidos', { exact: true })).toBeVisible();
+        await expect(page.getByText('Próximos 7 dias')).toBeVisible();
+        await expect(page.getByText('Próximos 30 dias')).toBeVisible();
+        await expect(page.getByText('Parcela vencida')).toBeVisible();
+        await expect(page.getByText('Parcela semanal')).toBeVisible();
+        await expect(page.getByText('Parcela mensal')).toBeVisible();
+
+        await page.getByText('Parcela semanal').click();
+        await expect(page.getByRole('heading', { name: 'Ficha Agenda' })).toBeVisible();
+        await expect(page.getByText('Contrato Agenda')).toBeVisible();
     });
 });

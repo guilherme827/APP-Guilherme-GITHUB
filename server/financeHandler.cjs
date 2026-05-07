@@ -1,6 +1,7 @@
 const accountHandler = require('./accountHandler.cjs');
 
 const FINANCE_PREFERENCE_KEY = 'finance.state';
+const FINANCE_BACKUP_PREFERENCE_KEY = 'finance.backup.latest';
 const FINANCE_TABLES = {
     cashboxes: 'finance_cashboxes',
     cashboxTransactions: 'finance_cashbox_transactions',
@@ -37,6 +38,45 @@ function normalizeItemsByTab(itemsByTab) {
 
 function isValidFinanceState(state) {
     return state !== null && typeof state === 'object' && !Array.isArray(state);
+}
+
+function isLegacyFinanceMigrationEnabled(env = {}) {
+    return String(env.ALLOW_FINANCE_LEGACY_MIGRATION || '').trim().toLowerCase() === 'true';
+}
+
+function parseComparableTimestamp(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+function timestampsMatch(left, right) {
+    const leftTime = parseComparableTimestamp(left);
+    const rightTime = parseComparableTimestamp(right);
+    if (leftTime !== null && rightTime !== null) {
+        return leftTime === rightTime;
+    }
+    return String(left || '').trim() === String(right || '').trim();
+}
+
+function createFinanceConflictError(currentUpdatedAt) {
+    const error = new Error('O financeiro foi atualizado em outra aba ou dispositivo. Atualize os dados antes de salvar novamente.');
+    error.code = 'FINANCE_STATE_CONFLICT';
+    error.statusCode = 409;
+    error.currentUpdatedAt = currentUpdatedAt || null;
+    return error;
+}
+
+function assertFinanceWriteIsCurrent(baseUpdatedAt, currentUpdatedAt) {
+    if (!currentUpdatedAt || !baseUpdatedAt) return;
+    if (!timestampsMatch(baseUpdatedAt, currentUpdatedAt)) {
+        throw createFinanceConflictError(currentUpdatedAt);
+    }
+}
+
+function isDerivedFichaPaymentTransaction(transaction) {
+    return String(transaction?.id || '').startsWith('ficha-payment-');
 }
 
 function normalizeDateStorageValue(value) {
@@ -183,12 +223,14 @@ function buildFichaStateRows(fichas, contracts, contractEntries) {
 }
 
 function buildCashboxStateRows(cashboxes, transactions) {
-    const txByCashboxId = (transactions || []).reduce((map, row) => {
-        const list = map.get(String(row.cashbox_id)) || [];
-        list.push(row);
-        map.set(String(row.cashbox_id), list);
-        return map;
-    }, new Map());
+    const txByCashboxId = (transactions || [])
+        .filter((row) => !isDerivedFichaPaymentTransaction(row))
+        .reduce((map, row) => {
+            const list = map.get(String(row.cashbox_id)) || [];
+            list.push(row);
+            map.set(String(row.cashbox_id), list);
+            return map;
+        }, new Map());
 
     return (cashboxes || []).map((cashbox) => {
         const cashboxTransactions = (txByCashboxId.get(String(cashbox.id)) || [])
@@ -301,21 +343,24 @@ function extractDomainRowsFromState(state, organizationId) {
     }));
 
     const cashboxTransactions = itemsByTab.caixa.flatMap((cashbox) => (
-        (Array.isArray(cashbox.transactions) ? cashbox.transactions : []).map((transaction, index) => ({
-            id: String(transaction.id),
-            organization_id: organizationId,
-            cashbox_id: String(cashbox.id),
-            occurred_on: normalizeDateStorageValue(transaction.isoDate || transaction.date || cashbox.createdAt || new Date().toISOString().slice(0, 10)),
-            description: String(transaction.description || '').trim(),
-            entry_type: String(transaction.type || (transaction.credit ? 'entrada' : 'debito')),
-            credit_amount: Math.max(parseCurrencyValue(transaction.credit), 0),
-            debit_amount: Math.max(Math.abs(parseCurrencyValue(transaction.debit)), 0),
-            transfer_group_id: transaction.transferId || null,
-            transfer_direction: transaction.transferDirection || null,
-            counterpart_cashbox_id: transaction.counterpartCashboxId || null,
-            ficha_title: transaction.fichaTitle || '',
-            sort_index: index
-        }))
+        (Array.isArray(cashbox.transactions) ? cashbox.transactions : [])
+            .filter((transaction) => !isDerivedFichaPaymentTransaction(transaction))
+            .map((transaction, index) => ({
+                id: String(transaction.id),
+                organization_id: organizationId,
+                cashbox_id: String(cashbox.id),
+                occurred_on: normalizeDateStorageValue(transaction.isoDate || transaction.date || cashbox.createdAt || new Date().toISOString().slice(0, 10)),
+                description: String(transaction.description || '').trim(),
+                entry_type: String(transaction.type || (transaction.credit ? 'entrada' : 'debito')),
+                credit_amount: Math.max(parseCurrencyValue(transaction.credit), 0),
+                debit_amount: Math.max(Math.abs(parseCurrencyValue(transaction.debit)), 0),
+                transfer_group_id: transaction.transferId || null,
+                transfer_direction: transaction.transferDirection || null,
+                counterpart_cashbox_id: transaction.counterpartCashboxId || null,
+                ficha_title: transaction.fichaTitle || '',
+                sort_index: index,
+                updated_at: state.updatedAt || null
+            }))
     ));
 
     const fichas = itemsByTab.fichas.map((ficha, index) => ({
@@ -335,7 +380,8 @@ function extractDomainRowsFromState(state, organizationId) {
             cashbox_id: contract.cashboxId || null,
             description: String(contract.description || '').trim(),
             created_on: normalizeDateStorageValue(contract.createdAt || state.updatedAt || new Date().toISOString().slice(0, 10)),
-            sort_index: index
+            sort_index: index,
+            updated_at: state.updatedAt || null
         }))
     ));
 
@@ -350,7 +396,8 @@ function extractDomainRowsFromState(state, organizationId) {
                     occurred_on: normalizeDateStorageValue(entry.date),
                     description: String(entry.description || '').trim(),
                     amount: Math.max(Number(entry.value || 0), 0),
-                    sort_index: index
+                    sort_index: index,
+                    updated_at: state.updatedAt || null
                 }))),
                 ...((contract.debits || []).map((entry, index) => ({
                     id: String(entry.id),
@@ -360,7 +407,8 @@ function extractDomainRowsFromState(state, organizationId) {
                     occurred_on: normalizeDateStorageValue(entry.date),
                     description: String(entry.description || '').trim(),
                     amount: Math.max(Number(entry.value || 0), 0),
-                    sort_index: index
+                    sort_index: index,
+                    updated_at: state.updatedAt || null
                 }))),
                 ...((contract.schedules || []).map((entry, index) => ({
                     id: String(entry.id),
@@ -370,7 +418,8 @@ function extractDomainRowsFromState(state, organizationId) {
                     occurred_on: normalizeDateStorageValue(entry.date),
                     description: String(entry.description || '').trim(),
                     amount: Math.max(Number(entry.value || 0), 0),
-                    sort_index: index
+                    sort_index: index,
+                    updated_at: state.updatedAt || null
                 })))
             ]
         ))
@@ -480,30 +529,73 @@ async function replaceFinanceRows(serviceClient, organizationId, state) {
     }
 }
 
+async function persistFinanceBackup(serviceClient, userId, organizationId, previousState, nextState) {
+    if (!userId || !organizationId || !previousState?.updatedAt) return;
+
+    const backupValue = {
+        version: 1,
+        reason: 'before_finance_replace',
+        createdAt: new Date().toISOString(),
+        previousUpdatedAt: previousState.updatedAt || null,
+        nextUpdatedAt: nextState?.updatedAt || null,
+        previousState
+    };
+
+    const query = serviceClient
+        .from('user_preferences')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('preference_key', FINANCE_BACKUP_PREFERENCE_KEY)
+        .eq('organization_id', organizationId);
+
+    const { data: existing, error: existingError } = await query.maybeSingle();
+    if (existingError) {
+        if (isMissingPreferenceTable(existingError)) return;
+        throw new Error(existingError.message || 'Não foi possível preparar o backup do financeiro.');
+    }
+
+    const payload = {
+        user_id: userId,
+        organization_id: organizationId,
+        preference_key: FINANCE_BACKUP_PREFERENCE_KEY,
+        preference_value: backupValue
+    };
+
+    const result = existing?.id
+        ? await serviceClient.from('user_preferences').update(payload).eq('id', existing.id)
+        : await serviceClient.from('user_preferences').insert(payload);
+
+    if (result?.error) {
+        throw new Error(result.error.message || 'Não foi possível salvar o backup do financeiro.');
+    }
+}
+
 function hasAnyFinanceRows(rows) {
     return Object.values(rows).some((value) => Array.isArray(value) && value.length > 0);
 }
 
-async function readFinanceState(serviceClient, userId, organizationId) {
+async function readFinanceState(serviceClient, userId, organizationId, env = {}) {
     const rows = await fetchFinanceRows(serviceClient, organizationId);
     if (hasAnyFinanceRows(rows)) {
         const state = buildFinanceStateFromRows(rows);
         return { state, updatedAt: state.updatedAt };
     }
 
-    const legacyState = await fetchLegacyFinanceState(serviceClient, userId, organizationId);
-    if (isValidFinanceState(legacyState)) {
-        const migratedState = {
-            version: 2,
-            userScoped: false,
-            itemsByTab: normalizeItemsByTab(legacyState.itemsByTab),
-            updatedAt: legacyState.updatedAt || new Date().toISOString()
-        };
-        await replaceFinanceRows(serviceClient, organizationId, migratedState);
-        return {
-            state: migratedState,
-            updatedAt: migratedState.updatedAt
-        };
+    if (isLegacyFinanceMigrationEnabled(env)) {
+        const legacyState = await fetchLegacyFinanceState(serviceClient, userId, organizationId);
+        if (isValidFinanceState(legacyState)) {
+            const migratedState = {
+                version: 2,
+                userScoped: false,
+                itemsByTab: normalizeItemsByTab(legacyState.itemsByTab),
+                updatedAt: legacyState.updatedAt || new Date().toISOString()
+            };
+            await replaceFinanceRows(serviceClient, organizationId, migratedState);
+            return {
+                state: migratedState,
+                updatedAt: migratedState.updatedAt
+            };
+        }
     }
 
     return {
@@ -517,13 +609,19 @@ async function readFinanceState(serviceClient, userId, organizationId) {
     };
 }
 
-async function writeFinanceState(serviceClient, organizationId, state) {
+async function writeFinanceState(serviceClient, organizationId, state, options = {}) {
+    const currentRows = await fetchFinanceRows(serviceClient, organizationId);
+    const currentState = buildFinanceStateFromRows(currentRows);
+    assertFinanceWriteIsCurrent(options.baseUpdatedAt, currentState.updatedAt);
+
     const nextState = {
         version: 2,
         userScoped: false,
         itemsByTab: normalizeItemsByTab(state.itemsByTab),
-        updatedAt: state.updatedAt || new Date().toISOString()
+        updatedAt: new Date().toISOString()
     };
+
+    await persistFinanceBackup(serviceClient, options.userId, organizationId, currentState, nextState);
     await replaceFinanceRows(serviceClient, organizationId, nextState);
     const saved = await fetchFinanceRows(serviceClient, organizationId);
     const normalized = buildFinanceStateFromRows(saved);
@@ -546,7 +644,7 @@ async function handleGet(req, res, env) {
             accountHandler.sendJson(res, 403, { error: 'Usuário sem organização vinculada para acessar o financeiro.' });
             return;
         }
-        const finance = await readFinanceState(auth.serviceClient, auth.user.id, profile.organization_id);
+        const finance = await readFinanceState(auth.serviceClient, auth.user.id, profile.organization_id, env);
         accountHandler.sendJson(res, 200, {
             data: {
                 state: finance.state,
@@ -584,7 +682,10 @@ async function handlePut(req, res, env) {
             accountHandler.sendJson(res, 403, { error: 'Usuário sem organização vinculada para acessar o financeiro.' });
             return;
         }
-        const saved = await writeFinanceState(auth.serviceClient, profile.organization_id, body.state);
+        const saved = await writeFinanceState(auth.serviceClient, profile.organization_id, body.state, {
+            userId: auth.user.id,
+            baseUpdatedAt: body.baseUpdatedAt || null
+        });
         accountHandler.sendJson(res, 200, {
             data: {
                 state: saved.state,
@@ -592,7 +693,11 @@ async function handlePut(req, res, env) {
             }
         });
     } catch (error) {
-        accountHandler.sendJson(res, 500, { error: error.message || 'Não foi possível salvar o financeiro.' });
+        accountHandler.sendJson(res, error.statusCode || 500, {
+            error: error.message || 'Não foi possível salvar o financeiro.',
+            code: error.code || undefined,
+            currentUpdatedAt: error.currentUpdatedAt || undefined
+        });
     }
 }
 
