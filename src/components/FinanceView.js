@@ -2,6 +2,8 @@ import {
     loadUserScopedJsonStorage,
     saveUserScopedJsonStorage
 } from '../dashboard/userScopedStorage.js';
+import JSZip from 'jszip';
+import systemGlobeTexture from '../assets/earth-blue-marble.jpg';
 import { escapeHtml } from '../utils/sanitize.js';
 import { showNoticeModal } from './NoticeModal.js';
 import { showConfirmModal } from './ConfirmModal.js';
@@ -66,6 +68,7 @@ export function renderFinanceiroView(container, storageKey) {
         selectedFichaId: null,
         actionModal: null,
         fichaModal: null,
+        exportModal: null,
         expandedContractsByFicha: {},
         syncStatus: mapSyncStatusToUi(initialSyncMeta?.syncStatus || 'remote'),
         syncUpdatedAt: initialSyncMeta?.updatedAt || existingState?.updatedAt || null,
@@ -99,7 +102,7 @@ export function renderFinanceiroView(container, storageKey) {
     let lastNotifiedSyncUpdatedAt = null;
     let feedbackTimeoutId = null;
 
-    const canApplyExternalSync = () => !state.isAdding && !state.actionModal && !state.fichaModal;
+    const canApplyExternalSync = () => !state.isAdding && !state.actionModal && !state.fichaModal && !state.exportModal;
 
     const applyRemoteStateInPlace = (result, { isManualRefresh = false } = {}) => {
         const normalized = normalizeFinanceSyncResult(result, buildPersistedFinanceState(state));
@@ -422,7 +425,8 @@ export function renderFinanceiroView(container, storageKey) {
 
     const render = () => {
         const activeTab = FINANCE_TABS.find((tab) => tab.id === state.activeTab) || FINANCE_TABS[0];
-        const activeItems = getSortedFinanceItems(state.itemsByTab[activeTab.id] || [], activeTab.id).map((item) => normalizeFinanceItemForRender(item, activeTab.id));
+        const activeItems = getSortedFinanceItems(state.itemsByTab[activeTab.id] || [], activeTab.id)
+            .map((item) => normalizeFinanceItemForRender(item, activeTab.id, state.itemsByTab.fichas || []));
         const scheduleDashboard = activeTab.id === 'agendamentos'
             ? buildFinanceScheduleDashboard(state.itemsByTab.fichas || [])
             : null;
@@ -582,6 +586,17 @@ export function renderFinanceiroView(container, storageKey) {
 
                 ${selectedCashbox && state.actionModal ? renderCashboxActionModal(state.actionModal, state.descriptionMemory, state.itemsByTab.caixa || [], selectedCashbox.id) : ''}
                 ${selectedFicha && state.fichaModal ? renderFichaActionModal(state.fichaModal, selectedFicha, state.itemsByTab.caixa || []) : ''}
+                ${state.exportModal ? renderFinanceExportModal(state.exportModal, buildFinanceExportPreview({
+                    context: state.exportModal.context,
+                    cashbox: selectedCashbox,
+                    ficha: selectedFicha,
+                    cashboxFilterMode: state.cashboxFilterMode,
+                    cashboxFilterMonth: state.cashboxFilterMonth,
+                    cashboxFilterYear: state.cashboxFilterYear,
+                    fichaFilterMode: state.fichaFilterMode,
+                    fichaFilterMonth: state.fichaFilterMonth,
+                    fichaFilterYear: state.fichaFilterYear
+                })) : ''}
             </section>
         `;
 
@@ -599,6 +614,7 @@ export function renderFinanceiroView(container, storageKey) {
                 state.selectedFichaId = null;
                 state.actionModal = null;
                 state.fichaModal = null;
+                state.exportModal = null;
                 persistState({ remote: false });
                 render();
             });
@@ -635,6 +651,86 @@ export function renderFinanceiroView(container, storageKey) {
             void refreshRemoteState();
         });
 
+        container.querySelector('[data-finance-export-open]')?.addEventListener('click', () => {
+            const context = selectedCashbox ? 'caixa' : selectedFicha ? 'ficha' : '';
+            if (!context) return;
+            state.exportModal = createFinanceExportModalState(context);
+            state.detailMenuKey = null;
+            render();
+        });
+
+        container.querySelectorAll('[data-finance-export-cancel]').forEach((node) => {
+            node.addEventListener('click', (event) => {
+                if (event.target !== node && node.classList.contains('finance-modal-backdrop')) return;
+                if (state.exportModal?.isDownloading) return;
+                state.exportModal = null;
+                render();
+            });
+        });
+
+        container.querySelectorAll('[data-finance-export-option]').forEach((input) => {
+            input.addEventListener('change', () => {
+                if (!state.exportModal) return;
+                const optionId = String(input.dataset.financeExportOption || '');
+                state.exportModal.selected = {
+                    ...(state.exportModal.selected || {}),
+                    [optionId]: Boolean(input.checked)
+                };
+            });
+        });
+
+        container.querySelectorAll('[data-finance-export-format]').forEach((button) => {
+            button.addEventListener('click', async () => {
+                if (!state.exportModal || state.exportModal.isDownloading) return;
+                const format = String(button.dataset.financeExportFormat || '');
+                const exportData = buildFinanceExportData({
+                    context: state.exportModal.context,
+                    selected: state.exportModal.selected,
+                    cashbox: selectedCashbox,
+                    ficha: selectedFicha,
+                    cashboxes: state.itemsByTab.caixa || [],
+                    fichas: state.itemsByTab.fichas || [],
+                    cashboxFilterMode: state.cashboxFilterMode,
+                    cashboxFilterMonth: state.cashboxFilterMonth,
+                    cashboxFilterYear: state.cashboxFilterYear,
+                    fichaFilterMode: state.fichaFilterMode,
+                    fichaFilterMonth: state.fichaFilterMonth,
+                    fichaFilterYear: state.fichaFilterYear
+                });
+
+                if (!exportData.sections.length) {
+                    showNoticeModal('Download financeiro', 'Selecione pelo menos um item para baixar.');
+                    return;
+                }
+
+                state.exportModal = {
+                    ...state.exportModal,
+                    isDownloading: true,
+                    activeFormat: format
+                };
+                render();
+
+                try {
+                    if (format === 'pdf') {
+                        await downloadFinancePdf(exportData);
+                    } else if (format === 'excel') {
+                        await downloadFinanceExcel(exportData);
+                    }
+                    state.exportModal = null;
+                    render();
+                    showInlineFeedback(format === 'pdf' ? 'PDF financeiro gerado com sucesso.' : 'Excel financeiro gerado com sucesso.');
+                } catch (error) {
+                    state.exportModal = {
+                        ...state.exportModal,
+                        isDownloading: false,
+                        activeFormat: null
+                    };
+                    render();
+                    showNoticeModal('Download financeiro', error?.message || 'Nao foi possivel gerar o arquivo.');
+                }
+            });
+        });
+
         container.querySelectorAll('[data-cashbox-view-mode]').forEach((button) => {
             button.addEventListener('click', () => {
                 const nextMode = String(button.dataset.cashboxViewMode || '');
@@ -664,6 +760,7 @@ export function renderFinanceiroView(container, storageKey) {
             state.fichaFilterMode = 'tudo';
             state.fichaFilterMonth = getCurrentMonthValue();
             state.fichaFilterYear = getCurrentYearValue();
+            state.exportModal = null;
             render();
         });
 
@@ -673,6 +770,7 @@ export function renderFinanceiroView(container, storageKey) {
             state.selectedFichaId = null;
             state.openMenuId = null;
             state.detailMenuKey = null;
+            state.exportModal = null;
             persistState({ remote: false });
             render();
         });
@@ -1261,9 +1359,9 @@ export function renderFinanceiroView(container, storageKey) {
             state.draftName = String(event.currentTarget.value || '');
         });
 
-        container.querySelector('.finance-modal-card')?.addEventListener('click', (event) => {
+        container.querySelectorAll('.finance-modal-card').forEach((card) => card.addEventListener('click', (event) => {
             event.stopPropagation();
-        });
+        }));
 
         emitSyncState();
         hasRenderedOnce = true;
@@ -1475,6 +1573,14 @@ function createFinanceItem(activeTab, customName = '') {
 
 
 function renderFinanceCard(item, openMenuId) {
+    if (item.type === 'caixa') {
+        return renderCashboxFinanceCard(item, openMenuId);
+    }
+
+    if (item.type === 'ficha') {
+        return renderFichaFinanceCard(item, openMenuId);
+    }
+
     const isMenuOpen = String(openMenuId) === String(item.id);
     return `
         <article class="finance-card" data-finance-card-id="${escapeAttribute(item.id)}">
@@ -1516,6 +1622,140 @@ function renderFinanceCard(item, openMenuId) {
                         <strong class="is-${entry.tone}">${entry.value}</strong>
                     </div>
                 `).join('')}
+            </div>
+        </article>
+    `;
+}
+
+function renderFinanceCardMenu(item, openMenuId) {
+    const isMenuOpen = String(openMenuId) === String(item.id);
+    return `
+        <div class="finance-card__menu-wrap">
+            <button
+                type="button"
+                class="finance-card__menu-trigger"
+                data-finance-menu-trigger="${escapeAttribute(item.id)}"
+                aria-label="Abrir acoes do card"
+            >
+                ${renderMenuIcon()}
+            </button>
+            ${isMenuOpen ? `
+                <div class="finance-card__menu">
+                    <button type="button" data-finance-menu-action="edit" data-finance-item-id="${escapeAttribute(item.id)}">Editar</button>
+                    <button type="button" data-finance-menu-action="delete" data-finance-item-id="${escapeAttribute(item.id)}">Excluir</button>
+                </div>
+            ` : ''}
+        </div>
+    `;
+}
+
+function renderCashboxFinanceCard(item, openMenuId) {
+    const linkedSummary = item.linkedContractsSummary || { contracted: 0, paid: 0, outstanding: 0, scheduled: 0, contractCount: 0 };
+    const entriesMetric = findMetricByLabel(item.metrics, 'Entradas')?.value || 'R$ 0,00';
+    const exitsMetric = findMetricByLabel(item.metrics, 'Saidas')?.value || 'R$ 0,00';
+    const balanceMetric = findMetricByLabel(item.metrics, 'Saldo Total')?.value || 'R$ 0,00';
+    const balanceValue = parseCurrencyValue(balanceMetric);
+    const outstandingValue = Number(linkedSummary.outstanding || 0);
+    const contractCount = Number(linkedSummary.contractCount || 0);
+    const contractLabel = `${contractCount} ${contractCount === 1 ? 'contrato vinculado' : 'contratos vinculados'}`;
+    return `
+        <article class="finance-card finance-card--cashbox" data-finance-card-id="${escapeAttribute(item.id)}">
+            <div class="finance-card__head">
+                <div class="finance-card__title-wrap">
+                    <span class="finance-card__icon">${renderCardIcon()}</span>
+                    <strong class="finance-card__title">${escapeHtml(item.title)}</strong>
+                </div>
+                ${renderFinanceCardMenu(item, openMenuId)}
+            </div>
+
+            <div class="cashbox-card__focus">
+                <div class="cashbox-card__highlight cashbox-card__highlight--balance">
+                    <span>Saldo total</span>
+                    <strong class="${balanceValue < 0 ? 'is-negative' : 'is-positive'}">${escapeHtml(balanceMetric)}</strong>
+                </div>
+                <div class="cashbox-card__highlight cashbox-card__highlight--receivable">
+                    <span>A receber</span>
+                    <strong class="${outstandingValue > 0 ? 'is-info' : 'is-positive'}">${formatCurrency(outstandingValue)}</strong>
+                    <small>${escapeHtml(contractLabel)}</small>
+                </div>
+            </div>
+
+            <div class="cashbox-card__micro-grid">
+                <div class="cashbox-card__micro">
+                    <span>Entradas</span>
+                    <strong class="is-positive">${escapeHtml(entriesMetric)}</strong>
+                </div>
+                <div class="cashbox-card__micro">
+                    <span>Saídas</span>
+                    <strong class="is-negative">${escapeHtml(exitsMetric)}</strong>
+                </div>
+                <div class="cashbox-card__micro">
+                    <span>Contratado</span>
+                    <strong class="is-info">${formatCurrency(linkedSummary.contracted || 0)}</strong>
+                </div>
+                <div class="cashbox-card__micro">
+                    <span>Pago</span>
+                    <strong class="is-positive">${formatCurrency(linkedSummary.paid || 0)}</strong>
+                </div>
+            </div>
+
+            <div class="cashbox-card__bottom">
+                <span>Agendado nos contratos</span>
+                <strong class="is-warning">${formatCurrency(linkedSummary.scheduled || 0)}</strong>
+            </div>
+        </article>
+    `;
+}
+
+function renderFichaFinanceCard(item, openMenuId) {
+    const contracts = Array.isArray(item.contracts) ? item.contracts : [];
+    const totals = buildFichaDetailTotals(contracts);
+    const receivable = Math.max(totals.contracted - totals.paid, 0);
+    const scheduled = contracts.reduce(
+        (sum, contract) => sum + (contract.schedules || []).reduce((inner, entry) => inner + parseFinanceAmount(entry), 0),
+        0
+    );
+    const contractCount = contracts.length;
+    const contractLabel = `${contractCount} ${contractCount === 1 ? 'contrato' : 'contratos'}`;
+    return `
+        <article class="finance-card finance-card--ficha" data-finance-card-id="${escapeAttribute(item.id)}">
+            <div class="finance-card__head">
+                <div class="finance-card__title-wrap">
+                    <span class="finance-card__icon">${renderCardIcon()}</span>
+                    <strong class="finance-card__title">${escapeHtml(item.title)}</strong>
+                </div>
+                ${renderFinanceCardMenu(item, openMenuId)}
+            </div>
+
+            <div class="ficha-card__focus">
+                <div class="ficha-card__highlight ficha-card__highlight--balance">
+                    <span>Saldo da ficha</span>
+                    <strong class="${totals.balance < 0 ? 'is-negative' : totals.balance > 0 ? 'is-positive' : 'is-info'}">${formatCurrency(totals.balance)}</strong>
+                </div>
+                <div class="ficha-card__highlight ficha-card__highlight--receivable">
+                    <span>A receber</span>
+                    <strong class="${receivable > 0 ? 'is-info' : 'is-positive'}">${formatCurrency(receivable)}</strong>
+                    <small>${escapeHtml(contractLabel)}</small>
+                </div>
+            </div>
+
+            <div class="ficha-card__micro-grid">
+                <div class="ficha-card__micro">
+                    <span>Contratado</span>
+                    <strong class="is-info">${formatCurrency(totals.contracted)}</strong>
+                </div>
+                <div class="ficha-card__micro">
+                    <span>Pago</span>
+                    <strong class="is-positive">${formatCurrency(totals.paid)}</strong>
+                </div>
+                <div class="ficha-card__micro">
+                    <span>Agendado</span>
+                    <strong class="is-warning">${formatCurrency(scheduled)}</strong>
+                </div>
+                <div class="ficha-card__micro">
+                    <span>Contratos</span>
+                    <strong class="is-info">${String(contractCount).padStart(2, '0')}</strong>
+                </div>
             </div>
         </article>
     `;
@@ -1687,7 +1927,14 @@ function getSortedFinanceItems(items = [], tabId = '') {
     return safeItems.sort((left, right) => String(left?.title || '').localeCompare(String(right?.title || ''), 'pt-BR', { sensitivity: 'base' }));
 }
 
-function normalizeFinanceItemForRender(item, tabId = '') {
+function normalizeFinanceItemForRender(item, tabId = '', fichas = []) {
+    if (tabId === 'caixa') {
+        return {
+            ...item,
+            linkedContractsSummary: buildCashboxContractsSummary(fichas, item.id)
+        };
+    }
+
     if (tabId !== 'fichas') return item;
     const contracts = Array.isArray(item?.contracts) ? item.contracts : [];
     return {
@@ -1704,6 +1951,11 @@ function resolveMetricTone(item, metric) {
         return numericValue < 0 ? 'negative' : numericValue > 0 ? 'positive' : 'info';
     }
     return metric?.tone || 'info';
+}
+
+function findMetricByLabel(metrics = [], label = '') {
+    const normalizedLabel = normalizeText(label);
+    return (Array.isArray(metrics) ? metrics : []).find((metric) => normalizeText(metric?.label) === normalizedLabel) || null;
 }
 
 function renderCashboxDetailView(cashbox, fichas = [], detailMenuKey = null, filterMode = 'tudo', selectedMonth = getCurrentMonthValue(), selectedYear = getCurrentYearValue()) {
@@ -1747,6 +1999,9 @@ function renderCashboxDetailView(cashbox, fichas = [], detailMenuKey = null, fil
                     </div>
                 </div>
                 <div class="cashbox-detail__actions">
+                    <button type="button" class="cashbox-detail__action finance-export-trigger" data-finance-export-open="caixa" aria-label="Baixar caixa" title="Baixar caixa">
+                        ${renderDownloadIcon()} <span class="finance-export-trigger__label">Baixar</span>
+                    </button>
                     <button type="button" class="cashbox-detail__action cashbox-detail__action--entrada" data-cashbox-action="entrada">
                         ${renderPlusMiniIcon()} Crédito
                     </button>
@@ -1932,6 +2187,9 @@ function renderFichaDetailView(
                     ` : ''}
                 </div>
                 <div class="cashbox-detail__actions">
+                    <button type="button" class="cashbox-detail__action finance-export-trigger" data-finance-export-open="ficha" aria-label="Baixar ficha" title="Baixar ficha">
+                        ${renderDownloadIcon()} <span class="finance-export-trigger__label">Baixar</span>
+                    </button>
                     <button type="button" class="cashbox-detail__action ficha-detail__action--contrato" data-ficha-action="contrato">
                         ${renderPlusMiniIcon()} Contrato
                     </button>
@@ -2390,6 +2648,1092 @@ function renderFichaActionModal(fichaModal, ficha, cashboxes = []) {
     `;
 }
 
+function createFinanceExportModalState(context) {
+    const selected = getFinanceExportOptions(context).reduce((acc, option) => ({
+        ...acc,
+        [option.id]: option.defaultSelected !== false
+    }), {});
+    return {
+        context,
+        selected,
+        isDownloading: false,
+        activeFormat: null
+    };
+}
+
+function buildFinanceExportPreview({
+    context,
+    cashbox = null,
+    ficha = null,
+    cashboxFilterMode = 'tudo',
+    cashboxFilterMonth = getCurrentMonthValue(),
+    cashboxFilterYear = getCurrentYearValue(),
+    fichaFilterMode = 'tudo',
+    fichaFilterMonth = getCurrentMonthValue(),
+    fichaFilterYear = getCurrentYearValue()
+} = {}) {
+    if (context === 'caixa' && cashbox) {
+        const filterContext = buildCashboxFilterContext(
+            cashbox.transactions || [],
+            cashboxFilterMode,
+            cashboxFilterMonth,
+            cashboxFilterYear
+        );
+        return {
+            context,
+            contextLabel: 'Caixa',
+            title: cashbox.title || 'Caixa sem nome',
+            periodLabel: filterContext.label || 'Todos os lançamentos'
+        };
+    }
+
+    if (context === 'ficha' && ficha) {
+        const contracts = Array.isArray(ficha.contracts) ? ficha.contracts : [];
+        const filterEntries = contracts.flatMap((contract) => [
+            ...buildContractStatement(contract),
+            ...buildContractScheduleRows(contract)
+        ]);
+        const filterContext = buildCashboxFilterContext(
+            filterEntries,
+            fichaFilterMode,
+            fichaFilterMonth,
+            fichaFilterYear
+        );
+        return {
+            context,
+            contextLabel: 'Ficha',
+            title: ficha.title || 'Ficha sem nome',
+            periodLabel: filterContext.label || 'Todos os lançamentos'
+        };
+    }
+
+    return {
+        context,
+        contextLabel: context === 'caixa' ? 'Caixa' : 'Ficha',
+        title: '',
+        periodLabel: 'Todos os lançamentos'
+    };
+}
+
+function getFinanceExportOptions(context, periodLabel = '') {
+    const safePeriod = periodLabel || 'filtro atual';
+    if (context === 'caixa') {
+        return [
+            {
+                id: 'summary',
+                label: 'Resumo do caixa',
+                hint: 'Totais do caixa, período selecionado e saldos vinculados.',
+                defaultSelected: true
+            },
+            {
+                id: 'filteredStatement',
+                label: `Extrato do filtro (${safePeriod})`,
+                hint: 'A mesma visão que está aberta agora no detalhe do caixa.',
+                defaultSelected: true
+            },
+            {
+                id: 'fullStatement',
+                label: 'Extrato completo',
+                hint: 'Todos os lançamentos do caixa, sem filtro de mês ou ano.',
+                defaultSelected: false
+            },
+            {
+                id: 'linkedContracts',
+                label: 'Contratos vinculados',
+                hint: 'Fichas e contratos que movimentam este caixa.',
+                defaultSelected: true
+            }
+        ];
+    }
+
+    return [
+        {
+            id: 'summary',
+            label: 'Resumo da ficha',
+            hint: 'Valor contratado, pago, saldo e total agendado.',
+            defaultSelected: true
+        },
+        {
+            id: 'filteredStatement',
+            label: `Extrato do filtro (${safePeriod})`,
+            hint: 'Créditos e débitos conforme o filtro ativo da ficha.',
+            defaultSelected: true
+        },
+        {
+            id: 'fullStatement',
+            label: 'Extrato completo',
+            hint: 'Todos os créditos e débitos da ficha.',
+            defaultSelected: false
+        },
+        {
+            id: 'contracts',
+            label: 'Contratos',
+            hint: 'Resumo individual de contratos, caixas vinculados e saldos.',
+            defaultSelected: true
+        },
+        {
+            id: 'schedules',
+            label: 'Agendamentos',
+            hint: 'Compromissos financeiros da ficha com prazo e valor.',
+            defaultSelected: true
+        }
+    ];
+}
+
+function renderFinanceExportModal(exportModal, preview) {
+    if (!exportModal || !preview?.title) return '';
+    const options = getFinanceExportOptions(exportModal.context, preview.periodLabel);
+    const selected = exportModal.selected || {};
+    const selectedCount = options.filter((option) => selected[option.id]).length;
+    const isDownloading = Boolean(exportModal.isDownloading);
+    const pdfBusy = isDownloading && exportModal.activeFormat === 'pdf';
+    const excelBusy = isDownloading && exportModal.activeFormat === 'excel';
+
+    return `
+        <div class="finance-modal-backdrop" data-finance-export-cancel>
+            <div class="finance-modal-card finance-export-modal" role="dialog" aria-modal="true" aria-label="Baixar financeiro">
+                <div class="finance-export-modal__head">
+                    <div>
+                        <p class="label-tech">${escapeAttribute(preview.contextLabel)} financeiro</p>
+                        <h3 class="font-black">Baixar ${escapeAttribute(preview.title)}</h3>
+                        <span>${selectedCount} ${selectedCount === 1 ? 'item selecionado' : 'itens selecionados'} · ${escapeAttribute(preview.periodLabel)}</span>
+                    </div>
+                    <button type="button" class="finance-export-modal__close" data-finance-export-cancel aria-label="Fechar download" ${isDownloading ? 'disabled' : ''}>
+                        ${renderCloseIcon()}
+                    </button>
+                </div>
+
+                <div class="finance-export-modal__options" aria-label="Itens para baixar">
+                    ${options.map((option) => `
+                        <label class="finance-export-option ${selected[option.id] ? 'is-selected' : ''}">
+                            <input
+                                type="checkbox"
+                                data-finance-export-option="${escapeAttribute(option.id)}"
+                                ${selected[option.id] ? 'checked' : ''}
+                                ${isDownloading ? 'disabled' : ''}
+                            />
+                            <span class="finance-export-option__check" aria-hidden="true"></span>
+                            <span class="finance-export-option__copy">
+                                <strong>${escapeAttribute(option.label)}</strong>
+                                <small>${escapeAttribute(option.hint)}</small>
+                            </span>
+                        </label>
+                    `).join('')}
+                </div>
+
+                <div class="finance-export-modal__formats" aria-label="Formatos para baixar">
+                    <button type="button" class="finance-export-format finance-export-format--pdf" data-finance-export-format="pdf" ${isDownloading ? 'disabled' : ''}>
+                        ${renderDownloadIcon()}
+                        <span>
+                            <strong>${pdfBusy ? 'Gerando PDF...' : 'PDF'}</strong>
+                            <small>com logo da Geo</small>
+                        </span>
+                    </button>
+                    <button type="button" class="finance-export-format finance-export-format--excel" data-finance-export-format="excel" ${isDownloading ? 'disabled' : ''}>
+                        ${renderDownloadIcon()}
+                        <span>
+                            <strong>${excelBusy ? 'Gerando Excel...' : 'Excel'}</strong>
+                            <small>planilha .xlsx</small>
+                        </span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function buildFinanceExportData({
+    context,
+    selected = {},
+    cashbox = null,
+    ficha = null,
+    cashboxes = [],
+    fichas = [],
+    cashboxFilterMode = 'tudo',
+    cashboxFilterMonth = getCurrentMonthValue(),
+    cashboxFilterYear = getCurrentYearValue(),
+    fichaFilterMode = 'tudo',
+    fichaFilterMonth = getCurrentMonthValue(),
+    fichaFilterYear = getCurrentYearValue()
+} = {}) {
+    const generatedAt = new Date();
+    const generatedAtLabel = generatedAt.toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+
+    if (context === 'caixa' && cashbox) {
+        const filterContext = buildCashboxFilterContext(
+            cashbox.transactions || [],
+            cashboxFilterMode,
+            cashboxFilterMonth,
+            cashboxFilterYear
+        );
+        const sections = buildCashboxExportSections({
+            cashbox,
+            fichas,
+            selected,
+            filterContext,
+            generatedAtLabel
+        });
+        return {
+            context,
+            contextLabel: 'Caixa',
+            title: `Caixa - ${cashbox.title || 'Sem nome'}`,
+            entityTitle: cashbox.title || 'Caixa sem nome',
+            periodLabel: filterContext.label || 'Todos os lançamentos',
+            generatedAtLabel,
+            fileBaseName: buildFinanceExportFileName('caixa', cashbox.title, generatedAt),
+            sections
+        };
+    }
+
+    if (context === 'ficha' && ficha) {
+        const contracts = Array.isArray(ficha.contracts) ? ficha.contracts : [];
+        const filterEntries = contracts.flatMap((contract) => [
+            ...buildContractStatement(contract),
+            ...buildContractScheduleRows(contract)
+        ]);
+        const filterContext = buildCashboxFilterContext(
+            filterEntries,
+            fichaFilterMode,
+            fichaFilterMonth,
+            fichaFilterYear
+        );
+        const statementFilterContext = buildCashboxFilterContext(
+            buildFichaGeneralStatement(contracts),
+            fichaFilterMode,
+            fichaFilterMonth,
+            fichaFilterYear
+        );
+        const sections = buildFichaExportSections({
+            ficha,
+            cashboxes,
+            selected,
+            filterContext,
+            statementFilterContext,
+            generatedAtLabel
+        });
+        return {
+            context,
+            contextLabel: 'Ficha',
+            title: `Ficha - ${ficha.title || 'Sem nome'}`,
+            entityTitle: ficha.title || 'Ficha sem nome',
+            periodLabel: filterContext.label || 'Todos os lançamentos',
+            generatedAtLabel,
+            fileBaseName: buildFinanceExportFileName('ficha', ficha.title, generatedAt),
+            sections
+        };
+    }
+
+    return {
+        context,
+        contextLabel: context === 'caixa' ? 'Caixa' : 'Ficha',
+        title: 'Financeiro',
+        entityTitle: 'Financeiro',
+        periodLabel: 'Todos os lançamentos',
+        generatedAtLabel,
+        fileBaseName: buildFinanceExportFileName('financeiro', 'relatorio', generatedAt),
+        sections: []
+    };
+}
+
+function buildCashboxExportSections({ cashbox, fichas = [], selected = {}, filterContext, generatedAtLabel }) {
+    const sections = [];
+    const transactions = Array.isArray(cashbox.transactions) ? cashbox.transactions : [];
+    const allTransactions = buildCashboxFilterContext(transactions, 'tudo').transactions;
+    const contractsSummary = buildCashboxContractsSummary(fichas, cashbox.id);
+    const linkedContracts = buildCashboxLinkedContractRows(fichas, cashbox.id);
+    const cardMetrics = buildCashboxCardMetrics(transactions).metrics;
+    const currentBalance = cardMetrics.find((item) => item.label === 'Saldo Total')?.value || 'R$ 0,00';
+
+    if (selected.summary) {
+        sections.push({
+            id: 'summary',
+            kind: 'summary',
+            title: 'Resumo do caixa',
+            columns: ['Item', 'Valor'],
+            widths: [0.38, 0.62],
+            rows: [
+                ['Caixa', cashbox.title || 'Caixa sem nome'],
+                ['Periodo', filterContext.label || 'Todos os lançamentos'],
+                ['Gerado em', generatedAtLabel],
+                ['Total contratado', formatCurrency(contractsSummary.contracted)],
+                ['Total pago', formatCurrency(contractsSummary.paid)],
+                ['Total em aberto', formatCurrency(contractsSummary.outstanding)],
+                ['Entradas', cardMetrics.find((item) => item.label === 'Entradas')?.value || 'R$ 0,00'],
+                ['Saidas', cardMetrics.find((item) => item.label === 'Saidas')?.value || 'R$ 0,00'],
+                ['Saldo atual', currentBalance]
+            ]
+        });
+    }
+
+    if (selected.filteredStatement) {
+        sections.push({
+            id: 'filteredStatement',
+            title: `Extrato do filtro - ${filterContext.label || 'Todos os lançamentos'}`,
+            columns: ['Data', 'Ficha', 'Descrição', 'Crédito', 'Débito', 'Saldo'],
+            widths: [0.1, 0.13, 0.29, 0.16, 0.16, 0.16],
+            rows: buildCashboxStatementExportRows(filterContext.transactions)
+        });
+    }
+
+    if (selected.fullStatement) {
+        sections.push({
+            id: 'fullStatement',
+            title: 'Extrato completo do caixa',
+            columns: ['Data', 'Ficha', 'Descrição', 'Crédito', 'Débito', 'Saldo'],
+            widths: [0.1, 0.13, 0.29, 0.16, 0.16, 0.16],
+            rows: buildCashboxStatementExportRows(allTransactions)
+        });
+    }
+
+    if (selected.linkedContracts) {
+        sections.push({
+            id: 'linkedContracts',
+            title: 'Contratos vinculados ao caixa',
+            columns: ['Ficha', 'Contrato', 'Contratado', 'Pago', 'Em aberto', 'Agendado'],
+            widths: [0.18, 0.28, 0.14, 0.14, 0.14, 0.12],
+            rows: linkedContracts
+        });
+    }
+
+    return sections;
+}
+
+function buildFichaExportSections({ ficha, cashboxes = [], selected = {}, filterContext, statementFilterContext, generatedAtLabel }) {
+    const sections = [];
+    const contracts = Array.isArray(ficha.contracts) ? ficha.contracts : [];
+    const fullStatement = buildFichaGeneralStatement(contracts);
+    const totals = buildFichaDetailTotals(contracts);
+    const scheduledTotal = contracts.reduce(
+        (sum, contract) => sum + (contract.schedules || []).reduce((inner, item) => inner + parseFinanceAmount(item), 0),
+        0
+    );
+
+    if (selected.summary) {
+        sections.push({
+            id: 'summary',
+            kind: 'summary',
+            title: 'Resumo da ficha',
+            columns: ['Item', 'Valor'],
+            widths: [0.38, 0.62],
+            rows: [
+                ['Ficha', ficha.title || 'Ficha sem nome'],
+                ['Periodo', filterContext.label || 'Todos os lançamentos'],
+                ['Gerado em', generatedAtLabel],
+                ['Valor contratado', formatCurrency(totals.contracted)],
+                ['Valor pago', formatCurrency(totals.paid)],
+                ['Saldo', formatCurrency(totals.balance)],
+                ['Agendado', formatCurrency(scheduledTotal)],
+                ['Contratos', String(contracts.length)]
+            ]
+        });
+    }
+
+    if (selected.filteredStatement) {
+        sections.push({
+            id: 'filteredStatement',
+            title: `Extrato do filtro - ${filterContext.label || 'Todos os lançamentos'}`,
+            columns: ['Data', 'Contrato', 'Descrição', 'Crédito', 'Débito', 'Saldo'],
+            widths: [0.1, 0.17, 0.27, 0.15, 0.15, 0.16],
+            rows: buildFichaStatementExportRows(statementFilterContext?.transactions || [])
+        });
+    }
+
+    if (selected.fullStatement) {
+        sections.push({
+            id: 'fullStatement',
+            title: 'Extrato completo da ficha',
+            columns: ['Data', 'Contrato', 'Descrição', 'Crédito', 'Débito', 'Saldo'],
+            widths: [0.1, 0.17, 0.27, 0.15, 0.15, 0.16],
+            rows: buildFichaStatementExportRows(fullStatement)
+        });
+    }
+
+    if (selected.contracts) {
+        sections.push({
+            id: 'contracts',
+            title: 'Contratos da ficha',
+            columns: ['Contrato', 'Caixa', 'Contratado', 'Pago', 'Saldo', 'Agendado'],
+            widths: [0.28, 0.2, 0.13, 0.13, 0.13, 0.13],
+            rows: buildFichaContractExportRows(contracts, cashboxes)
+        });
+    }
+
+    if (selected.schedules) {
+        sections.push({
+            id: 'schedules',
+            title: 'Agendamentos da ficha',
+            columns: ['Data', 'Contrato', 'Descrição', 'Valor', 'Prazo'],
+            widths: [0.12, 0.24, 0.34, 0.14, 0.16],
+            rows: buildFichaScheduleExportRows(contracts)
+        });
+    }
+
+    return sections;
+}
+
+function buildCashboxStatementExportRows(rows = []) {
+    return (Array.isArray(rows) ? rows : []).map((row) => [
+        row.date || '-',
+        row.fichaTitle || '-',
+        row.description || '-',
+        row.credit || '-',
+        row.debit || '-',
+        row.balance || 'R$ 0,00'
+    ]);
+}
+
+function buildFichaStatementExportRows(rows = []) {
+    return (Array.isArray(rows) ? rows : []).map((row) => [
+        row.date || '-',
+        row.contractDescription || '-',
+        row.description || '-',
+        row.credit || '-',
+        row.debit || '-',
+        row.balance || 'R$ 0,00'
+    ]);
+}
+
+function buildCashboxLinkedContractRows(fichas = [], cashboxId = '') {
+    return (Array.isArray(fichas) ? fichas : []).flatMap((ficha) => (
+        (Array.isArray(ficha?.contracts) ? ficha.contracts : [])
+            .filter((contract) => String(contract.cashboxId || '') === String(cashboxId))
+            .map((contract) => {
+                const summary = buildContractFinancialSummary(contract);
+                const scheduled = (contract.schedules || []).reduce((sum, item) => sum + parseFinanceAmount(item), 0);
+                return [
+                    ficha.title || 'Ficha sem nome',
+                    contract.description || 'Contrato sem descrição',
+                    formatCurrency(summary.contracted),
+                    formatCurrency(summary.paid),
+                    formatCurrency(Math.max(summary.contracted - summary.paid, 0)),
+                    formatCurrency(scheduled)
+                ];
+            })
+    ));
+}
+
+function buildFichaContractExportRows(contracts = [], cashboxes = []) {
+    return (Array.isArray(contracts) ? contracts : []).map((contract) => {
+        const summary = buildContractFinancialSummary(contract);
+        const scheduled = (contract.schedules || []).reduce((sum, item) => sum + parseFinanceAmount(item), 0);
+        const cashbox = findItemById(cashboxes, contract.cashboxId);
+        return [
+            contract.description || 'Contrato sem descrição',
+            cashbox?.title || 'Nao definido',
+            formatCurrency(summary.contracted),
+            formatCurrency(summary.paid),
+            formatCurrency(summary.balance),
+            formatCurrency(scheduled)
+        ];
+    });
+}
+
+function buildFichaScheduleExportRows(contracts = []) {
+    return (Array.isArray(contracts) ? contracts : []).flatMap((contract) => (
+        buildContractScheduleRows(contract).map((row) => [
+            row.date || '-',
+            contract.description || 'Contrato sem descrição',
+            row.description || '-',
+            row.value || 'R$ 0,00',
+            row.dueLabel || '-'
+        ])
+    ));
+}
+
+function buildFinanceExportFileName(context, title, generatedAt = new Date()) {
+    const datePart = generatedAt.toISOString().slice(0, 10);
+    const safeTitle = String(title || 'relatorio')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60) || 'relatorio';
+    return `financeiro-${context}-${safeTitle}-${datePart}`;
+}
+
+async function downloadFinancePdf(exportData) {
+    const globeImage = await loadImageElement(systemGlobeTexture).catch(() => null);
+    const canvases = renderFinancePdfCanvases(exportData, globeImage);
+    if (!canvases.length) {
+        throw new Error('Nao ha dados para gerar o PDF.');
+    }
+    const pageImages = canvases.map((canvas) => ({
+        bytes: dataUrlToBytes(canvas.toDataURL('image/jpeg', 0.92)),
+        width: canvas.width,
+        height: canvas.height
+    }));
+    const pdfBytes = buildPdfFromJpegPages(pageImages);
+    downloadBlob(`${exportData.fileBaseName}.pdf`, new Blob([pdfBytes], { type: 'application/pdf' }));
+}
+
+function renderFinancePdfCanvases(exportData, globeImage = null) {
+    const pageConfig = {
+        width: 1240,
+        height: 1754,
+        margin: 88,
+        footerTop: 1630,
+        contentWidth: 1240 - 176
+    };
+    const pages = [];
+    let current = null;
+
+    const createPage = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = pageConfig.width;
+        canvas.height = pageConfig.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Nao foi possivel preparar o PDF.');
+        const page = { canvas, ctx, y: 0 };
+        page.y = drawFinancePdfPageBackground(page, exportData, globeImage, pageConfig);
+        pages.push(page);
+        current = page;
+        return page;
+    };
+
+    const ensureSpace = (height) => {
+        if (!current) createPage();
+        if (current.y + height <= pageConfig.footerTop) return;
+        createPage();
+    };
+
+    const drawContinuationTitle = (section) => {
+        ensureSpace(70);
+        const ctx = current.ctx;
+        ctx.fillStyle = '#334155';
+        ctx.font = '700 22px Arial, sans-serif';
+        ctx.fillText(`${section.title} (continuação)`, pageConfig.margin, current.y);
+        current.y += 32;
+    };
+
+    const drawTableHeader = (section, columnWidths) => {
+        const ctx = current.ctx;
+        const headerHeight = 46;
+        drawRoundedRect(ctx, pageConfig.margin, current.y, pageConfig.contentWidth, headerHeight, 14, '#e8f1f8');
+        ctx.fillStyle = '#0f172a';
+        ctx.font = '700 17px Arial, sans-serif';
+        let x = pageConfig.margin;
+        section.columns.forEach((column, index) => {
+            drawPdfCellText(ctx, column, x + 14, current.y + 28, columnWidths[index] - 28, 20, shouldAlignFinanceColumnRight(column) ? 'right' : 'left');
+            x += columnWidths[index];
+        });
+        current.y += headerHeight;
+    };
+
+    const drawTable = (section) => {
+        const rows = section.rows.length > 0 ? section.rows : [Array(section.columns.length).fill('Sem dados para este item.')];
+        const widthRatios = Array.isArray(section.widths) && section.widths.length === section.columns.length
+            ? section.widths
+            : section.columns.map(() => 1 / section.columns.length);
+        const columnWidths = widthRatios.map((ratio) => pageConfig.contentWidth * ratio);
+        let needsHeader = true;
+
+        rows.forEach((row, rowIndex) => {
+            const ctx = current.ctx;
+            ctx.font = '16px Arial, sans-serif';
+            const cellLines = section.columns.map((_, index) => (
+                shouldKeepFinanceColumnSingleLine(section.columns[index])
+                    ? [String(row[index] ?? '-')]
+                    : wrapCanvasText(ctx, row[index] ?? '', Math.max(columnWidths[index] - 28, 42), 4)
+            ));
+            const rowHeight = Math.max(48, Math.max(...cellLines.map((lines) => lines.length)) * 20 + 22);
+
+            if (needsHeader) {
+                ensureSpace(46 + rowHeight + 12);
+                drawTableHeader(section, columnWidths);
+                needsHeader = false;
+            } else if (current.y + rowHeight > pageConfig.footerTop) {
+                createPage();
+                drawContinuationTitle(section);
+                drawTableHeader(section, columnWidths);
+            }
+
+            const y = current.y;
+            const fill = rowIndex % 2 === 0 ? '#ffffff' : '#f8fafc';
+            ctx.fillStyle = fill;
+            ctx.fillRect(pageConfig.margin, y, pageConfig.contentWidth, rowHeight);
+            ctx.strokeStyle = '#dbe5ef';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(pageConfig.margin, y + rowHeight);
+            ctx.lineTo(pageConfig.margin + pageConfig.contentWidth, y + rowHeight);
+            ctx.stroke();
+
+            let x = pageConfig.margin;
+            section.columns.forEach((column, index) => {
+                const align = shouldAlignFinanceColumnRight(column) ? 'right' : 'left';
+                const textX = align === 'right' ? x + columnWidths[index] - 14 : x + 14;
+                drawPdfTextLines(ctx, cellLines[index], textX, y + 27, columnWidths[index] - 28, 20, align);
+                x += columnWidths[index];
+            });
+            current.y += rowHeight;
+        });
+    };
+
+    createPage();
+    exportData.sections.forEach((section, index) => {
+        ensureSpace(94);
+        if (index > 0) current.y += 18;
+        const ctx = current.ctx;
+        ctx.fillStyle = '#2563eb';
+        ctx.font = '700 15px Arial, sans-serif';
+        ctx.fillText(String(index + 1).padStart(2, '0'), pageConfig.margin, current.y);
+        ctx.fillStyle = '#0f172a';
+        ctx.font = '800 28px Arial, sans-serif';
+        ctx.fillText(section.title, pageConfig.margin + 48, current.y + 2);
+        current.y += 34;
+        drawTable(section);
+    });
+
+    pages.forEach((page, index) => {
+        drawFinancePdfFooter(page, index + 1, pages.length, pageConfig);
+    });
+
+    return pages.map((page) => page.canvas);
+}
+
+function drawFinancePdfPageBackground(page, exportData, globeImage, pageConfig) {
+    const { ctx } = page;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, pageConfig.width, pageConfig.height);
+
+    drawFinanceSystemLogo(ctx, pageConfig.margin, 58, globeImage);
+
+    drawRoundedRect(ctx, pageConfig.width - pageConfig.margin - 222, 60, 222, 44, 22, '#e0f2fe');
+    ctx.fillStyle = '#0369a1';
+    ctx.font = '700 18px Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('RELATORIO FINANCEIRO', pageConfig.width - pageConfig.margin - 111, 88);
+    ctx.textAlign = 'left';
+
+    let y = 198;
+    const titleMaxWidth = pageConfig.contentWidth;
+    ctx.fillStyle = '#0f172a';
+    ctx.font = '800 34px Arial, sans-serif';
+    const titleLines = wrapCanvasText(ctx, exportData.title, titleMaxWidth, 2);
+    titleLines.forEach((line) => {
+        ctx.fillText(line, pageConfig.margin, y);
+        y += 40;
+    });
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '18px Arial, sans-serif';
+    const metaLine = `${exportData.contextLabel}: ${exportData.entityTitle}`;
+    const periodLine = `Periodo: ${exportData.periodLabel} · Gerado em ${exportData.generatedAtLabel}`;
+    wrapCanvasText(ctx, metaLine, titleMaxWidth, 1).forEach((line) => {
+        ctx.fillText(line, pageConfig.margin, y);
+        y += 28;
+    });
+    wrapCanvasText(ctx, periodLine, titleMaxWidth, 1).forEach((line) => {
+        ctx.fillText(line, pageConfig.margin, y);
+        y += 28;
+    });
+
+    const separatorY = y + 10;
+    ctx.strokeStyle = '#dbe5ef';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(pageConfig.margin, separatorY);
+    ctx.lineTo(pageConfig.width - pageConfig.margin, separatorY);
+    ctx.stroke();
+    return separatorY + 44;
+}
+
+function drawFinanceSystemLogo(ctx, x, y, globeImage = null) {
+    ctx.save();
+    ctx.fillStyle = '#0f172a';
+    ctx.font = '900 54px Arial, sans-serif';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('GEOC', x, y + 48);
+    const geocWidth = ctx.measureText('GEOC').width;
+    const globeSize = 52;
+    const globeX = x + geocWidth + 8;
+    const globeY = y + 2;
+    drawFinanceSystemGlobe(ctx, globeX, globeY, globeSize, globeImage);
+    ctx.fillText('NSULT', globeX + globeSize + 8, y + 48);
+
+    const taglineY = y + 70;
+    drawRoundedRect(ctx, x, taglineY, 382, 28, 14, '#eef4f8');
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#334155';
+    ctx.font = '700 11px Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('SISTEMA DE GESTAO INTELIGENTE', x + 191, taglineY + 18);
+    ctx.textAlign = 'left';
+    ctx.restore();
+}
+
+function drawFinanceSystemGlobe(ctx, x, y, size, globeImage = null) {
+    const center = { x: x + size / 2, y: y + size / 2 };
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate(-23.5 * Math.PI / 180);
+    ctx.beginPath();
+    ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    ctx.fillStyle = '#00102a';
+    ctx.fillRect(-size / 2, -size / 2, size, size);
+    if (globeImage) {
+        ctx.drawImage(globeImage, -size / 2, -size / 2, size, size);
+    }
+    const shine = ctx.createRadialGradient(-size * 0.22, -size * 0.25, 1, -size * 0.12, -size * 0.16, size * 0.5);
+    shine.addColorStop(0, 'rgba(255,255,255,0.52)');
+    shine.addColorStop(0.32, 'rgba(172,224,255,0.2)');
+    shine.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = shine;
+    ctx.fillRect(-size / 2, -size / 2, size, size);
+
+    const shade = ctx.createRadialGradient(size * 0.28, size * 0.12, size * 0.05, 0, 0, size * 0.68);
+    shade.addColorStop(0, 'rgba(2,6,23,0.04)');
+    shade.addColorStop(0.62, 'rgba(2,6,23,0.08)');
+    shade.addColorStop(1, 'rgba(1,8,24,0.68)');
+    ctx.fillStyle = shade;
+    ctx.fillRect(-size / 2, -size / 2, size, size);
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(96,165,250,0.45)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, size / 2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+}
+
+function drawFinancePdfFooter(page, pageNumber, pageTotal, pageConfig) {
+    const { ctx } = page;
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(pageConfig.margin, pageConfig.height - 86);
+    ctx.lineTo(pageConfig.width - pageConfig.margin, pageConfig.height - 86);
+    ctx.stroke();
+    ctx.fillStyle = '#64748b';
+    ctx.font = '16px Arial, sans-serif';
+    ctx.fillText('GEOCONSULT · Geologia, Mineração e Serviços Ambientais', pageConfig.margin, pageConfig.height - 52);
+    ctx.textAlign = 'right';
+    ctx.fillText(`Pagina ${pageNumber} de ${pageTotal}`, pageConfig.width - pageConfig.margin, pageConfig.height - 52);
+    ctx.textAlign = 'left';
+}
+
+function drawRoundedRect(ctx, x, y, width, height, radius, fillStyle) {
+    ctx.save();
+    ctx.fillStyle = fillStyle;
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+}
+
+function drawPdfCellText(ctx, text, x, y, width, lineHeight, align = 'left') {
+    drawPdfTextLines(ctx, wrapCanvasText(ctx, text, width, 1), align === 'right' ? x + width : x, y, width, lineHeight, align);
+}
+
+function drawPdfTextLines(ctx, lines, x, y, width, lineHeight, align = 'left') {
+    ctx.textAlign = align;
+    ctx.fillStyle = '#0f172a';
+    lines.forEach((line, index) => {
+        ctx.fillText(line, x, y + (index * lineHeight), width);
+    });
+    ctx.textAlign = 'left';
+}
+
+function wrapCanvasText(ctx, value, maxWidth, maxLines = 4) {
+    const words = String(value || '-').replace(/\s+/g, ' ').trim().split(' ');
+    const lines = [];
+    let currentLine = '';
+
+    words.forEach((word) => {
+        const testLine = currentLine ? `${currentLine} ${word}` : word;
+        if (ctx.measureText(testLine).width <= maxWidth) {
+            currentLine = testLine;
+            return;
+        }
+        if (currentLine) lines.push(currentLine);
+        currentLine = word;
+    });
+
+    if (currentLine) lines.push(currentLine);
+    if (lines.length <= maxLines) return lines;
+
+    const visibleLines = lines.slice(0, maxLines);
+    let lastLine = visibleLines[visibleLines.length - 1] || '';
+    while (lastLine.length > 1 && ctx.measureText(`${lastLine}...`).width > maxWidth) {
+        lastLine = lastLine.slice(0, -1);
+    }
+    visibleLines[visibleLines.length - 1] = `${lastLine.trim()}...`;
+    return visibleLines;
+}
+
+function shouldAlignFinanceColumnRight(column) {
+    return /valor|credito|crédito|debito|débito|saldo|pago|contratado|aberto|agendado|saidas|saídas|entradas/i.test(String(column || ''));
+}
+
+function shouldKeepFinanceColumnSingleLine(column) {
+    return /valor|credito|crédito|debito|débito|saldo|pago|contratado|aberto|agendado|saidas|saídas|entradas/i.test(String(column || ''));
+}
+
+function loadImageElement(src) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = reject;
+        image.src = src;
+    });
+}
+
+function dataUrlToBytes(dataUrl) {
+    const base64 = String(dataUrl || '').split(',')[1] || '';
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+}
+
+function buildPdfFromJpegPages(pageImages) {
+    const pageWidth = 595.28;
+    const pageHeight = 841.89;
+    const builder = createPdfObjectBuilder();
+    const pagesId = builder.reserveObject();
+    const catalogId = builder.reserveObject();
+    const pageIds = pageImages.map((pageImage) => {
+        const imageId = builder.addObject(createPdfStreamObject(
+            `/Type /XObject /Subtype /Image /Width ${pageImage.width} /Height ${pageImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode`,
+            pageImage.bytes
+        ));
+        const content = `q ${pageWidth.toFixed(2)} 0 0 ${pageHeight.toFixed(2)} 0 0 cm /Im1 Do Q`;
+        const contentBytes = stringToBytes(content);
+        const contentId = builder.addObject(createPdfStreamObject('', contentBytes));
+        return builder.addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageWidth.toFixed(2)} ${pageHeight.toFixed(2)}] /Resources << /XObject << /Im1 ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+    });
+
+    builder.setObject(pagesId, `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`);
+    builder.setObject(catalogId, `<< /Type /Catalog /Pages ${pagesId} 0 R >>`);
+    return builder.build(catalogId);
+}
+
+function createPdfObjectBuilder() {
+    const objects = [];
+    return {
+        reserveObject() {
+            objects.push(null);
+            return objects.length;
+        },
+        setObject(id, value) {
+            objects[id - 1] = value instanceof Uint8Array ? value : stringToBytes(String(value));
+        },
+        addObject(value) {
+            objects.push(value instanceof Uint8Array ? value : stringToBytes(String(value)));
+            return objects.length;
+        },
+        build(rootId) {
+            const chunks = [];
+            const offsets = [0];
+            let offset = 0;
+            const append = (chunk) => {
+                chunks.push(chunk);
+                offset += chunk.length;
+            };
+            append(stringToBytes('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'));
+            objects.forEach((objectBytes, index) => {
+                offsets[index + 1] = offset;
+                append(stringToBytes(`${index + 1} 0 obj\n`));
+                append(objectBytes || stringToBytes('<<>>'));
+                append(stringToBytes('\nendobj\n'));
+            });
+            const xrefOffset = offset;
+            const xrefRows = offsets.map((entryOffset, index) => (
+                index === 0
+                    ? '0000000000 65535 f '
+                    : `${String(entryOffset).padStart(10, '0')} 00000 n `
+            ));
+            append(stringToBytes(`xref\n0 ${objects.length + 1}\n${xrefRows.join('\n')}\ntrailer\n<< /Size ${objects.length + 1} /Root ${rootId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`));
+            return concatBytes(chunks);
+        }
+    };
+}
+
+function createPdfStreamObject(dictionary, streamBytes) {
+    return concatBytes([
+        stringToBytes(`<< ${dictionary ? `${dictionary} ` : ''}/Length ${streamBytes.length} >>\nstream\n`),
+        streamBytes,
+        stringToBytes('\nendstream')
+    ]);
+}
+
+function stringToBytes(value) {
+    return new TextEncoder().encode(value);
+}
+
+function concatBytes(chunks) {
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const output = new Uint8Array(totalLength);
+    let offset = 0;
+    chunks.forEach((chunk) => {
+        output.set(chunk, offset);
+        offset += chunk.length;
+    });
+    return output;
+}
+
+async function downloadFinanceExcel(exportData) {
+    const zip = new JSZip();
+    const sheets = buildFinanceWorkbookSheets(exportData);
+    if (!sheets.length) {
+        throw new Error('Nao ha dados para gerar o Excel.');
+    }
+
+    zip.file('[Content_Types].xml', buildXlsxContentTypes(sheets.length));
+    zip.folder('_rels').file('.rels', buildXlsxRootRelationships());
+    zip.folder('xl').file('workbook.xml', buildXlsxWorkbookXml(sheets));
+    zip.folder('xl').folder('_rels').file('workbook.xml.rels', buildXlsxWorkbookRelationships(sheets.length));
+    sheets.forEach((sheet, index) => {
+        zip.folder('xl').folder('worksheets').file(`sheet${index + 1}.xml`, buildXlsxWorksheetXml(sheet.rows));
+    });
+
+    const blob = await zip.generateAsync({
+        type: 'blob',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
+    downloadBlob(`${exportData.fileBaseName}.xlsx`, blob);
+}
+
+function buildFinanceWorkbookSheets(exportData) {
+    const usedNames = new Set();
+    return exportData.sections.map((section) => {
+        const rows = section.kind === 'summary'
+            ? section.rows
+            : [
+                section.columns,
+                ...(section.rows.length > 0 ? section.rows : [Array(section.columns.length).fill('Sem dados')])
+            ];
+        return {
+            name: getUniqueWorksheetName(section.title, usedNames),
+            rows
+        };
+    });
+}
+
+function getUniqueWorksheetName(name, usedNames) {
+    const baseName = String(name || 'Planilha')
+        .replace(/[\\/?*\[\]:]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 31) || 'Planilha';
+    let candidate = baseName;
+    let counter = 2;
+    while (usedNames.has(candidate.toLowerCase())) {
+        const suffix = ` ${counter}`;
+        candidate = `${baseName.slice(0, 31 - suffix.length)}${suffix}`;
+        counter += 1;
+    }
+    usedNames.add(candidate.toLowerCase());
+    return candidate;
+}
+
+function buildXlsxContentTypes(sheetCount) {
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+    <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+    <Default Extension="xml" ContentType="application/xml"/>
+    <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+    ${Array.from({ length: sheetCount }, (_, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('\n    ')}
+</Types>`;
+}
+
+function buildXlsxRootRelationships() {
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+}
+
+function buildXlsxWorkbookXml(sheets) {
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+    <sheets>
+        ${sheets.map((sheet, index) => `<sheet name="${escapeXml(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join('\n        ')}
+    </sheets>
+</workbook>`;
+}
+
+function buildXlsxWorkbookRelationships(sheetCount) {
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    ${Array.from({ length: sheetCount }, (_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join('\n    ')}
+</Relationships>`;
+}
+
+function buildXlsxWorksheetXml(rows) {
+    const safeRows = rows.length > 0 ? rows : [['Sem dados']];
+    const maxColumns = safeRows.reduce((max, row) => Math.max(max, row.length), 1);
+    const columnXml = Array.from({ length: maxColumns }, (_, index) => `<col min="${index + 1}" max="${index + 1}" width="${index === 0 ? 24 : 18}" customWidth="1"/>`).join('');
+    const rowXml = safeRows.map((row, rowIndex) => `
+        <row r="${rowIndex + 1}">
+            ${row.map((cell, columnIndex) => {
+                const cellRef = `${columnIndexToName(columnIndex + 1)}${rowIndex + 1}`;
+                return `<c r="${cellRef}" t="inlineStr"><is><t>${escapeXml(cell)}</t></is></c>`;
+            }).join('')}
+        </row>
+    `).join('');
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+    <cols>${columnXml}</cols>
+    <sheetData>${rowXml}</sheetData>
+</worksheet>`;
+}
+
+function columnIndexToName(index) {
+    let value = index;
+    let name = '';
+    while (value > 0) {
+        const remainder = (value - 1) % 26;
+        name = String.fromCharCode(65 + remainder) + name;
+        value = Math.floor((value - 1) / 26);
+    }
+    return name;
+}
+
+function escapeXml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
+function downloadBlob(fileName, blob) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1200);
+}
+
 function formatDateShort(value) {
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return '-';
@@ -2447,6 +3791,25 @@ function renderChevronIcon() {
     return `
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="m6 9 6 6 6-6"></path>
+        </svg>
+    `;
+}
+
+function renderDownloadIcon() {
+    return `
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v12"></path>
+            <path d="m7 10 5 5 5-5"></path>
+            <path d="M5 21h14"></path>
+        </svg>
+    `;
+}
+
+function renderCloseIcon() {
+    return `
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 6 6 18"></path>
+            <path d="m6 6 12 12"></path>
         </svg>
     `;
 }
@@ -2823,9 +4186,11 @@ function buildCashboxContractsSummary(fichas = [], cashboxId) {
             acc.contracted += summary.contracted;
             acc.paid += summary.paid;
             acc.outstanding += Math.max(summary.contracted - summary.paid, 0);
+            acc.scheduled += (contract.schedules || []).reduce((sum, item) => sum + parseFinanceAmount(item), 0);
+            acc.contractCount += 1;
         });
         return acc;
-    }, { contracted: 0, paid: 0, outstanding: 0 });
+    }, { contracted: 0, paid: 0, outstanding: 0, scheduled: 0, contractCount: 0 });
 }
 
 function buildFichaDetailTotals(contracts = []) {
